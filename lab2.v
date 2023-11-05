@@ -58,6 +58,14 @@
 `define FUNC_LBU      3'b100
 `define FUNC_LHU      3'b101
 
+// define the branch type instruction
+`define FUNC_BEQ      3'b000
+`define FUNC_BNE      3'b001
+`define FUNC_BLT      3'b100
+`define FUNC_BGE      3'b101
+`define FUNC_BLTU     3'b110
+`define FUNC_BGEU     3'b111
+
 
 `define SIZE_BYTE  2'b00
 `define SIZE_HWORD 2'b01
@@ -77,34 +85,42 @@ module SingleCycleCPU(halt, clk, rst);
   wire [31:0] ALU_Result;
   wire        RWrEn;
 
-  wire [31:0] NPC, PC_Plus_4;
+  wire [31:0] NPC, PC_Plus_4, PC_branch;
   wire [6:0]  opcode;
 
   wire [6:0]  funct7;
   wire [2:0]  funct3;
   wire signed [31:0] imm_ext;
+  wire signed [31:0] imm_branch;
   wire unsigned [31:0] imm_ext_unsigned;
   wire signed [31:0] offset ;
   wire [4:0] shamt;
 
   wire [31:0] opB;
-  
+  wire branchTaken ; 
+  wire beqtaken, bnetaken, blttaken, bgetaken, bltutaken, bgeutaken;
+
+  wire IsRtype, IsItype, IsIshift, IsStore, IsLoad, IsBranch;
+  wire knowntype ;
 
   // Only support R-TYPE ADD and SUB
   assign IsRtype = (opcode == `OPCODE_COMPUTE) && 
-  (funct3 == `FUNC_ADD || funct3 == `FUNC_SUB || funct3 == `FUNC_SLL || funct3 == `FUNC_SLT || funct3 == `FUNC_SLTU || funct3 == `FUNC_XOR || funct3 == `FUNC_SRL || funct3 == `FUNC_SRA || funct3 == `FUNC_OR || funct3 == `FUNC_AND)
+  ( (funct3 == `FUNC_ADD) || (funct3 == `FUNC_SUB) || (funct3 == `FUNC_SLL) || (funct3 == `FUNC_SLT) || (funct3 == `FUNC_SLTU) || (funct3 == `FUNC_XOR) || (funct3 == `FUNC_SRL) || (funct3 == `FUNC_SRA) || (funct3 == `FUNC_OR) || (funct3 == `FUNC_AND) )
   && ((funct7 == `AUX_FUNC_ADD) || (funct7 == `AUX_FUNC_SUB) || (funct7 == `AUX_FUNC_SLL) || (funct7 == `AUX_FUNC_SLT) || (funct7 == `AUX_FUNC_SLTU) || (funct7 == `AUX_FUNC_XOR) || (funct7 == `AUX_FUNC_SRL) || (funct7 == `AUX_FUNC_SRA) || (funct7 == `AUX_FUNC_OR) || (funct7 == `AUX_FUNC_AND));
   
   assign IsItype = (opcode == `OPCODE_COMPUTE_I) &&
-  (funct3 == `FUNC_ADDI || funct3 == `FUNC_SLTI || funct3 == `FUNC_SLTIU || funct3 == `FUNC_XORI || funct3 == `FUNC_ORI || funct3 == `FUNC_ANDI);
+  ( (funct3 == `FUNC_ADDI) || (funct3 == `FUNC_SLTI) || (funct3 == `FUNC_SLTIU) || (funct3 == `FUNC_XORI) || (funct3 == `FUNC_ORI) || (funct3 == `FUNC_ANDI) );
 
-  assign IsIshift = (opcode == `OPCODE_COMPUTE_I) && (funct3 == `FUNC_SLLI || funct3 == `FUNC_SRLI || funct3 == `FUNC_SRAI) && ((funct7 == `AUX_FUNC_SLLI) || (funct7 == `AUX_FUNC_SRLI) || (funct7 == `AUX_FUNC_SRAI));
+  assign IsIshift = (opcode == `OPCODE_COMPUTE_I) && ((funct3 == `FUNC_SLLI) || (funct3 == `FUNC_SRLI) || (funct3 == `FUNC_SRAI) ) && ((funct7 == `AUX_FUNC_SLLI) || (funct7 == `AUX_FUNC_SRLI) || (funct7 == `AUX_FUNC_SRAI));
 
-  assign IsStore = (opcode == `OPCODE_STORE) && (funct3 == `FUNC_SB || funct3 == `FUNC_SH || funct3 == `FUNC_SW);
+  assign IsStore = (opcode == `OPCODE_STORE) && ( (funct3 == `FUNC_SB) || (funct3 == `FUNC_SH) || (funct3 == `FUNC_SW) );
 
-  assign IsLoad = (opcode == `OPCODE_LOAD) && (funct3 == `FUNC_LB || funct3 == `FUNC_LH || funct3 == `FUNC_LW || funct3 == `FUNC_LBU || funct3 == `FUNC_LHU);
+  assign IsLoad = (opcode == `OPCODE_LOAD) && ( (funct3 == `FUNC_LB) || (funct3 == `FUNC_LH) || (funct3 == `FUNC_LW) || (funct3 == `FUNC_LBU) || (funct3 == `FUNC_LHU) );
 
-  assign halt = !(IsRtype || IsItype || IsIshift || IsStore || IsLoad );
+  assign IsBranch = (opcode == `OPCODE_BRANCH) && (funct3 == `FUNC_BEQ || funct3 == `FUNC_BNE || funct3 == `FUNC_BLT || funct3 == `FUNC_BGE || funct3 == `FUNC_BLTU || funct3 == `FUNC_BGEU);
+
+
+  assign halt = (!( (IsLoad)|| (IsStore) || (IsBranch) || (IsRtype) || (IsItype)  || (IsIshift)) ) || (BadAddr); 
     
   // System State (everything is neg assert)
   InstMem IMEM(.Addr(PC), .Size(`SIZE_WORD), .DataOut(InstWord), .CLK(clk));
@@ -115,6 +131,7 @@ module SingleCycleCPU(halt, clk, rst);
       .AddrW(Rdst), .DataInW(RWrdata), .WenW(RWrEn), .CLK(clk));
 
   Reg PC_REG(.Din(NPC), .Qout(PC), .WEN(1'b0), .CLK(clk), .RST(rst));
+
 
   // Instruction Decode
   assign opcode = InstWord[6:0];   
@@ -127,7 +144,7 @@ module SingleCycleCPU(halt, clk, rst);
   // extend the immediate value to 32 bits for I type 
   assign imm_ext = { {20{InstWord[31]}}, InstWord[31:20] };
   assign imm_ext_unsigned = { {20{1'b0}}, InstWord[31:20] };
-
+  assign imm_branch = { {20{1'b0}} , InstWord[11:8], InstWord[30:25],InstWord[7], InstWord[31]} << 2 ;
 
   assign offset = { {20{InstWord[31]}}, InstWord[11:7], InstWord[31:25] };
 
@@ -135,15 +152,29 @@ module SingleCycleCPU(halt, clk, rst);
   assign opB = (IsItype) ? imm_ext : (IsIshift) ? shamt : Rdata2;
 
   // used for store & load
-  assign DataAddr = IsStore ? (Rdata1 + offset) : (funct3 == `FUNC_LBU || funct3 == `FUNC_LHU) ? (Rdata1 + imm_ext_unsigned) : (Rdata1 + imm_ext_unsigned);
-  assign MemSize = (funct3 == `FUNC_SB || funct3 == `FUNC_LB || funct3==`FUNC_LBU) ? `SIZE_BYTE : (funct3 == `FUNC_SH || funct3 == `FUNC_LH || funct3 ==`FUNC_LHU) ? `SIZE_HWORD : `SIZE_WORD;
+  assign DataAddr = IsStore ? (Rdata1 + offset) : ( (funct3 == `FUNC_LBU) || (funct3 == `FUNC_LHU) ) ? (Rdata1 + imm_ext_unsigned) : (Rdata1 + imm_ext);
+  assign MemSize = ( (funct3 == `FUNC_SB ) || (funct3 == `FUNC_LB)  || (funct3==`FUNC_LBU) ) ? `SIZE_BYTE : ( (funct3 == `FUNC_SH) || (funct3 == `FUNC_LH) || (funct3 ==`FUNC_LHU) ) ? `SIZE_HWORD : `SIZE_WORD;
   assign StoreData = Rdata2;
 
   // used for load
-  assign RWrdata = IsLoad ? DataWord : ALU_Result;
+  // if it is a load then use dataword, if it is rtype or itype then use the alu result, else use 0 
+  assign RWrdata = (IsLoad) ? DataWord : ALU_Result;
+  // if it is a load then the dataAddr should divide by 4
+  assign BadAddr = (IsLoad) ? (DataAddr[1:0] != 2'b00) : 1'b0;
 
   assign MemWrEn = !IsStore ; 
-  assign RWrEn = 1'b0;  // Every instruction will write to the register file
+  // if not branch and not store then write to the register file
+  assign RWrEn = (IsBranch || IsStore);
+
+  assign beqtaken = ((IsBranch) && (funct3 == `FUNC_BEQ))? (Rdata1 == Rdata2) : 1'b0;
+  assign bnetaken = ((IsBranch) && (funct3 == `FUNC_BNE))? (Rdata1 != Rdata2) : 1'b0;
+  assign blttaken = ((IsBranch) && (funct3 == `FUNC_BLT))? (Rdata1 < Rdata2) : 1'b0;
+  assign bgetaken = ((IsBranch) && (funct3 == `FUNC_BGE))? (Rdata1 >= Rdata2) : 1'b0;
+  assign bltutaken = ((IsBranch) && (funct3 == `FUNC_BLTU))? ($unsigned(Rdata1) < $unsigned(Rdata2)) : 1'b0;
+  assign bgeutaken = ((IsBranch) && (funct3 == `FUNC_BGEU) )? ($unsigned(Rdata1) >= $unsigned(Rdata2)) : 1'b0;
+
+  // check the func3 code and assign the branch taken
+  assign branchTaken = ( (beqtaken) || (bnetaken) || (blttaken) || (bgetaken) || (bltutaken) || (bgeutaken) );
 
   // Hardwired to support R-Type instructions -- please add muxes and other control signals
   ExecutionUnit EU(.out(ALU_Result), .opA(Rdata1), .opB(opB), .func(funct3), .auxFunc(funct7), 
@@ -151,7 +182,8 @@ module SingleCycleCPU(halt, clk, rst);
 
   // Fetch Address Datapath
   assign PC_Plus_4 = PC + 4;
-  assign NPC = PC_Plus_4;
+  assign PC_branch = PC + imm_branch ;
+  assign NPC = (branchTaken) ? PC_branch : PC_Plus_4;
    
 endmodule // SingleCycleCPU
 
@@ -172,45 +204,48 @@ module ExecutionUnit(out, opA, opB, func, auxFunc, IsRtype, IsItype, IsIshift);
     if (IsRtype) begin
       case({func, auxFunc})
         // artithmetic operations
-        10'b000_0000000: result = opA + opB; // ADD, assume no overflow bit
-        10'b000_0100000: result = opA - opB; // SUB
+        10'b000_0000000: result <= opA + opB; // ADD, assume no overflow bit
+        10'b000_0100000: result <= opA - opB; // SUB
         // logic operations
-        10'b111_0000000: result = opA & opB; // AND
-        10'b110_0000000: result = opA | opB; // OR
-        10'b100_0000000: result = opA ^ opB; // XOR
+        10'b111_0000000: result <= opA & opB; // AND
+        10'b110_0000000: result <= opA | opB; // OR
+        10'b100_0000000: result <= opA ^ opB; // XOR
         // shift operations
-        10'b001_0000000: result = $unsigned(opA) << opB; // SLL
-        10'b101_0000000: result = $unsigned(opA) >> opB; // SRL
-        10'b010_0000000: result = ($signed(opA) < $signed(opB)) ? 32'b1 : 32'b0; // SLT
-        10'b011_0000000: result = ($unsigned(opA) < $unsigned(opB))? 32'b1 : 32'b0; // SLTU
-        10'b101_0100000: result = ($signed(opA) >>> $unsigned(opB)); // SRA
+        10'b001_0000000: result <= $unsigned(opA) << opB; // SLL
+        10'b101_0000000: result <= $unsigned(opA) >> opB; // SRL
+        10'b010_0000000: result <= ($signed(opA) < $signed(opB)) ? 32'b1 : 32'b0; // SLT
+        10'b011_0000000: result <= ($unsigned(opA) < $unsigned(opB))? 32'b1 : 32'b0; // SLTU
+        10'b101_0100000: result <= ($signed(opA) >>> $unsigned(opB)); // SRA
       endcase
     end
     else if (IsItype) begin
       case (func)
       // addi
-      3'b000: result = opA + opB;
+      3'b000: result <= opA + opB;
       // slti
-      3'b010: result = ($signed(opA) < $signed(opB)) ? 32'b1 : 32'b0;
+      3'b010: result <= ($signed(opA) < $signed(opB)) ? 32'b1 : 32'b0;
       // sltiu
-      3'b011: result = ($unsigned(opA) < $unsigned(opB)) ? 32'b1 : 32'b0;
+      3'b011: result <= ($unsigned(opA) < $unsigned(opB)) ? 32'b1 : 32'b0;
       // xori
-      3'b100: result = opA ^ opB;
+      3'b100: result <= opA ^ opB;
       // ori
-      3'b110: result = opA | opB;
+      3'b110: result <= opA | opB;
       // andi
-      3'b111: result = opA & opB;
+      3'b111: result <= opA & opB;
       endcase
     end 
     else if (IsIshift) begin
       case({func, auxFunc})
       // slli 
-      10'b001_0000000: result = $unsigned(opA) << opB;
+      10'b001_0000000: result <= $unsigned(opA) << opB;
       // srli
-      10'b101_0000000: result = $unsigned(opA) >> opB;
+      10'b101_0000000: result <= $unsigned(opA) >> opB;
       // srai
-      10'b101_0100000: result = ($signed(opA) >>> $unsigned(opB));
+      10'b101_0100000: result <= ($signed(opA) >>> $unsigned(opB));
       endcase
+    end
+    else begin
+      result <= 32'b0;
     end
   end
 
