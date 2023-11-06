@@ -26,8 +26,8 @@ module tb;
 
       
       // Feel free to modify to inspect whatever you want
-      #0 $monitor($time,, "PC=%08x IR=%08x, offset=%08x, funct7=%08x", 
-      CPU.PC, CPU.InstWord, CPU.offset, CPU.funct7);
+      #0 $monitor($time,, "PC=%08x IR=%08x, funct7=%08x", 
+      CPU.PC, CPU.InstWord, CPU.funct7);
 
       // Exits when halt is asserted
       // wait(halt);
