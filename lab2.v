@@ -2,13 +2,17 @@
 // Groupname:
 // NetIDs:
 
-// Some useful defines...please add your own
+// Definition of ISA Encoding
 `define OPCODE_COMPUTE    7'b0110011
 `define OPCODE_BRANCH     7'b1100011
 `define OPCODE_LOAD       7'b0000011
 `define OPCODE_STORE      7'b0100011 
 `define OPCODE_COMPUTE_I  7'b0010011
+`define OPCODE_LUI        7'b0110111
+`define OPCODE_AUIPC      7'b0010111
+`define OPCODE_JUMP       7'b1101111
 
+// R-type FUNCT3
 `define FUNC_ADD      3'b000
 `define FUNC_SUB      3'b000
 `define FUNC_SLL      3'b001
@@ -20,7 +24,7 @@
 `define FUNC_OR       3'b110
 `define FUNC_AND      3'b111
 
-
+// R-type FUNCT7
 `define AUX_FUNC_ADD  7'b0000000
 `define AUX_FUNC_SUB  7'b0100000
 `define AUX_FUNC_SLL  7'b0000000
@@ -32,7 +36,7 @@
 `define AUX_FUNC_OR   7'b0000000
 `define AUX_FUNC_AND  7'b0000000
 
-// define the I type functions
+// I-type FUNCT3
 `define FUNC_ADDI     3'b000
 `define FUNC_SLLI     3'b001
 `define FUNC_SLTI     3'b010
@@ -43,28 +47,34 @@
 `define FUNC_ORI      3'b110
 `define FUNC_ANDI     3'b111
 
+// I-type FUNCT7
 `define AUX_FUNC_SLLI 7'b0000000
 `define AUX_FUNC_SRLI 7'b0000000
 `define AUX_FUNC_SRAI 7'b0100000
 
-// define the store type instruction
+// S-type FUNCT3
 `define FUNC_SB       3'b000
 `define FUNC_SH       3'b001
 `define FUNC_SW       3'b010
-// define the load type instruction
+
+// L-type FUNCT3
 `define FUNC_LB       3'b000
 `define FUNC_LH       3'b001
 `define FUNC_LW       3'b010
 `define FUNC_LBU      3'b100
 `define FUNC_LHU      3'b101
 
-// define the branch type instruction
+// B-type FUNCT3
 `define FUNC_BEQ      3'b000
 `define FUNC_BNE      3'b001
 `define FUNC_BLT      3'b100
 `define FUNC_BGE      3'b101
 `define FUNC_BLTU     3'b110
 `define FUNC_BGEU     3'b111
+
+// J-type FUNCT3
+`define FUNC_JALR      3'b000
+
 
 
 `define SIZE_BYTE  2'b00
@@ -82,7 +92,7 @@ module SingleCycleCPU(halt, clk, rst);
   
   wire [4:0]  Rsrc1, Rsrc2, Rdst;
   wire [31:0] Rdata1, Rdata2, RWrdata;
-  wire [31:0] ALU_Result;
+  wire [31:0] ALU_Result, LoadData;
   wire        RWrEn;
 
   wire [31:0] NPC, PC_Plus_4, PC_branch;
@@ -95,13 +105,14 @@ module SingleCycleCPU(halt, clk, rst);
   wire unsigned [31:0] imm_ext_unsigned;
   wire signed [31:0] offset ;
   wire [4:0] shamt;
+  wire [31:0] Large_imm, Aui_PC;
+  wire [31:0] j_imm, link_rd ; 
 
   wire [31:0] opB;
   wire branchTaken ; 
   wire beqtaken, bnetaken, blttaken, bgetaken, bltutaken, bgeutaken;
 
-  wire IsRtype, IsItype, IsIshift, IsStore, IsLoad, IsBranch;
-  wire knowntype ;
+  wire IsRtype, IsItype, IsIshift, IsStore, IsLoad, IsBranch, IsLui, IsAuiPC, IsJump;
 
   // Only support R-TYPE ADD and SUB
   assign IsRtype = (opcode == `OPCODE_COMPUTE) && 
@@ -119,8 +130,13 @@ module SingleCycleCPU(halt, clk, rst);
 
   assign IsBranch = (opcode == `OPCODE_BRANCH) && (funct3 == `FUNC_BEQ || funct3 == `FUNC_BNE || funct3 == `FUNC_BLT || funct3 == `FUNC_BGE || funct3 == `FUNC_BLTU || funct3 == `FUNC_BGEU);
 
+  assign IsLui = (opcode == `OPCODE_LUI);
 
-  assign halt = (!( (IsLoad)|| (IsStore) || (IsBranch) || (IsRtype) || (IsItype)  || (IsIshift)) ) || (BadAddr); 
+  assign IsAuiPC = (opcode == `OPCODE_AUIPC);
+
+  assign IsJump = (opcode == `OPCODE_JUMP);
+
+  assign halt = (!( (IsLoad)|| (IsStore) || (IsBranch)|| (IsJump) || (IsAuiPC) || (IsRtype) || (IsItype)  || (IsIshift) || (IsLui)) ) || (BadAddr); 
     
   // System State (everything is neg assert)
   InstMem IMEM(.Addr(PC), .Size(`SIZE_WORD), .DataOut(InstWord), .CLK(clk));
@@ -144,9 +160,17 @@ module SingleCycleCPU(halt, clk, rst);
   // extend the immediate value to 32 bits for I type 
   assign imm_ext = { {20{InstWord[31]}}, InstWord[31:20] };
   assign imm_ext_unsigned = { {20{1'b0}}, InstWord[31:20] };
-  assign imm_branch = { {20{1'b0}} , InstWord[11:8], InstWord[30:25],InstWord[7], InstWord[31]} << 2 ;
-
-  assign offset = { {20{InstWord[31]}}, InstWord[11:7], InstWord[31:25] };
+  // branch offset, original offset is 12 bits, we need to shift it to the left by 1 and add 0 to the LSB
+  // then shift again ensuring PC is always divisible by 4
+  assign imm_branch = { {19{InstWord[31]}} ,InstWord[31], InstWord[7], InstWord[30:25], InstWord[11:8], {1'b0} } << 1 ;
+  // store offset 
+  assign offset = { {20{InstWord[31]}}, InstWord[31:25], InstWord[11:7] };
+  // lui immediate value
+  assign Large_imm = { {12{InstWord[31]}}, InstWord[31:12] } << 12;
+  // auipc
+  assign Aui_PC = PC + Large_imm;
+  // jump immediate value
+  assign j_imm = (funct3 == `FUNC_ADDI) ? imm_ext : { 12{InstWord[31]}, InstWord[31],  InstWord[19:12], InstWord[20], InstWord[30:21]  };
 
   // if it is shift then use the shamt if it is isItype then use the immediate value else use rdata2
   assign opB = (IsItype) ? imm_ext : (IsIshift) ? shamt : Rdata2;
@@ -157,12 +181,21 @@ module SingleCycleCPU(halt, clk, rst);
   assign StoreData = Rdata2;
 
   // used for load
-  // if it is a load then use dataword, if it is rtype or itype then use the alu result, else use 0 
-  assign RWrdata = (IsLoad) ? DataWord : ALU_Result;
-  // if it is a load then the dataAddr should divide by 4
+  // if it is a load then use dataword, if it is rtype or itype then use the alu result
+  assign LoadData = ( (funct3 == `FUNC_LB) || (funct3 == `FUNC_LBU) ) ? (DataWord & 8'hff) : ( (funct3 == `FUNC_LH) || (funct3 == `FUNC_LHU) ) ? (DataWord & 16'hffff) : DataWord;
+  
+  // linked rd
+  assign link_rd = PC + 4;
+
+  // check if it is load or lui or auipc or j type 
+  assign RWrdata = (IsLoad) ? LoadData : (IsLui) ? Large_imm : (IsAuiPC) ? Aui_PC : (IsJump) ? link_rd : ALU_Result;
+  
+  // any load addr should div by 4
   assign BadAddr = (IsLoad) ? (DataAddr[1:0] != 2'b00) : 1'b0;
 
+  // only store should write to the memory
   assign MemWrEn = !IsStore ; 
+
   // if not branch and not store then write to the register file
   assign RWrEn = (IsBranch || IsStore);
 
@@ -183,7 +216,7 @@ module SingleCycleCPU(halt, clk, rst);
   // Fetch Address Datapath
   assign PC_Plus_4 = PC + 4;
   assign PC_branch = PC + imm_branch ;
-  assign NPC = (branchTaken) ? PC_branch : PC_Plus_4;
+  assign NPC = (branchTaken) ? PC_branch : (IsJump) ? (PC + j_imm) : PC_Plus_4;
    
 endmodule // SingleCycleCPU
 
