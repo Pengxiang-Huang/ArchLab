@@ -164,7 +164,7 @@ def AUIPC(dst, imm):
   return inst
 
 def Halt():
-  return 0x11111111
+  return 0xffffffff
 
 
 def Regsiter_Gen():
@@ -189,29 +189,28 @@ def Instruction_Gen():
   instructions = []
   ### write the assembly code here to generate the machine code
   # instructions.append(StoreB(2, 0, 1024))
-  # instructions.append(Add(3, 1, 2))
-  # instructions.append(BNE(0,1,1))
-  # instructions.append(BNE(0,1,1))
-  # instructions.append(BNE(0,1,1))
-  # instructions.append(BNE(0,1,1))
-  # instructions.append(Sub(3, 4, 5))
-  # instructions.append(BNE(0,1,1))
-  # instructions.append(BNE(0,1,1))
-  # instructions.append(BNE(0,1,1))
-  # instructions.append(Add(1, 1, 1))
-  # instructions.append(LoadB(4, 0, 4))
-  # instructions.append(LoadB(3, 0, 8))
-  # instructions.append(LoadW(2, 0, 4))
-  # instructions.append(LoadB(5, 0, 4))
-  # instructions.append(Add(2, 2, 2))
-  # instructions.append(Sub(3, 3, 3))
-  # instructions.append(StoreB(2, 0, 1024))
-  # instructions.append(StoreB(1, 0, 1023))
-  # instructions.append(Addi(1, 0, 1))
-  # instructions.append(Srli(1, 1, 1))
-  # instructions.append(Add(2, 0, 2))
-  # instructions.append(Addi(1, 0, 1))
-  # instructions.append(LUI(5, 128))
+  instructions.append(Add(3, 1, 2))
+  instructions.append(BNE(0,0,1))
+  instructions.append(BNE(0,0,1))
+  instructions.append(BNE(0,0,1))
+  instructions.append(BNE(0,0,1))
+  instructions.append(Sub(3, 4, 5))
+  instructions.append(BNE(0,0,1))
+  instructions.append(BNE(0,0,1))
+  instructions.append(Add(1, 1, 1))
+  instructions.append(LoadB(4, 0, 4))
+  instructions.append(LoadB(3, 0, 8))
+  instructions.append(LoadW(2, 0, 4))
+  instructions.append(LoadB(5, 0, 4))
+  instructions.append(Add(2, 2, 2))
+  instructions.append(Sub(3, 3, 3))
+  instructions.append(StoreB(2, 0, 1024))
+  instructions.append(StoreB(1, 0, 1023))
+  instructions.append(Addi(1, 0, 1))
+  instructions.append(Srli(1, 1, 1))
+  instructions.append(Add(2, 0, 2))
+  instructions.append(Addi(1, 0, 1))
+  instructions.append(LUI(5, 128))
   instructions.append(AUIPC(5, 128))
   instructions.append(AUIPC(6, 128))
   instructions.append(AUIPC(7, 128))

@@ -114,6 +114,7 @@ module SingleCycleCPU(halt, clk, rst);
   wire beqtaken, bnetaken, blttaken, bgetaken, bltutaken, bgeutaken;
 
   wire IsRtype, IsItype, IsIshift, IsStore, IsLoad, IsBranch, IsLui, IsAuiPC, IsJump;
+  wire IsHalt ; 
 
   // Only support R-TYPE ADD and SUB
   assign IsRtype = (opcode == `OPCODE_COMPUTE) && 
@@ -141,7 +142,10 @@ module SingleCycleCPU(halt, clk, rst);
 
   assign IsJump = (opcode == `OPCODE_JUMP);
 
-  assign halt = (!( (IsLoad)|| (IsStore) || (IsBranch)|| (IsJump) || (IsAuiPC) || (IsRtype) || (IsItype)  || (IsIshift) || (IsLui)) ) || (BadAddr); 
+  assign IsHalt = (InstWord == 32'hffffffff) ;
+  assign halt = IsHalt ;
+
+  // assign halt = (!( (IsLoad)|| (IsStore) || (IsBranch)|| (IsJump) || (IsAuiPC) || (IsRtype) || (IsItype)  || (IsIshift) || (IsLui)) ) || (BadAddr); 
     
   // System State (everything is neg assert)
   InstMem IMEM(.Addr(PC), .Size(`SIZE_WORD), .DataOut(InstWord), .CLK(clk));
@@ -234,7 +238,7 @@ module SingleCycleCPU(halt, clk, rst);
   // any of branch taken is true then taken 
   assign branchTaken = ( (beqtaken) || (bnetaken) || (blttaken) || (bgetaken) || (bltutaken) || (bgeutaken) );
 
-  // Hardwired to support R-Type instructions -- please add muxes and other control signals
+  // Hardwired to support R-Type and I-type instructions
   ExecutionUnit EU(.out(ALU_Result), .opA(Rdata1), .opB(opB), .func(funct3), .auxFunc(funct7), 
                   .IsRtype(IsRtype), .IsItype(IsItype), .IsIshift(IsIshift));
 
