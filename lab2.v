@@ -1,6 +1,6 @@
 // Northwestern - CompEng 361 - Lab2
-// Groupname:
-// NetIDs:
+// Groupname: SmartArch
+// NetIDs: tht5102, dsn9734 
 
 // Definition of ISA Encoding
 `define OPCODE_COMPUTE    7'b0110011
@@ -75,8 +75,7 @@
 // J-type FUNCT3
 `define FUNC_JALR      3'b000
 
-
-
+// Memory Size
 `define SIZE_BYTE  2'b00
 `define SIZE_HWORD 2'b01
 `define SIZE_WORD  2'b10
@@ -100,23 +99,22 @@ module SingleCycleCPU(halt, clk, rst);
 
   wire [6:0]  funct7;
   wire [2:0]  funct3;
+
   wire signed [31:0] imm_ext;
   wire signed [31:0] imm_branch;
-  wire unsigned [31:0] imm_ext_unsigned;
   wire signed [31:0] store_offset ;
-  wire [4:0] shamt;
+  wire [31:0] shamt;
   wire [31:0] Large_imm, Aui_PC;
   wire [31:0] jal_imm, link_rd ; 
-
 
   wire [31:0] opB;
   wire branchTaken ; 
   wire beqtaken, bnetaken, blttaken, bgetaken, bltutaken, bgeutaken;
 
+  wire known_type ;
   wire IsRtype, IsItype, IsIshift, IsStore, IsLoad, IsBranch, IsLui, IsAuiPC, IsJump;
-  wire IsHalt ; 
 
-  // Only support R-TYPE ADD and SUB
+  // check types of instructions
   assign IsRtype = (opcode == `OPCODE_COMPUTE) && 
   ( (funct3 == `FUNC_ADD) || (funct3 == `FUNC_SUB) || (funct3 == `FUNC_SLL) || (funct3 == `FUNC_SLT) || (funct3 == `FUNC_SLTU) || (funct3 == `FUNC_XOR) || (funct3 == `FUNC_SRL) || (funct3 == `FUNC_SRA) || (funct3 == `FUNC_OR) || (funct3 == `FUNC_AND) )&& 
   ( (funct7 == `AUX_FUNC_ADD) || (funct7 == `AUX_FUNC_SUB) || (funct7 == `AUX_FUNC_SLL) || (funct7 == `AUX_FUNC_SLT) || (funct7 == `AUX_FUNC_SLTU) || (funct7 == `AUX_FUNC_XOR) || (funct7 == `AUX_FUNC_SRL) || (funct7 == `AUX_FUNC_SRA) || (funct7 == `AUX_FUNC_OR) || (funct7 == `AUX_FUNC_AND));
@@ -142,10 +140,10 @@ module SingleCycleCPU(halt, clk, rst);
 
   assign IsJump = (opcode == `OPCODE_JUMP);
 
-  assign IsHalt = (InstWord == 32'hffffffff) ;
-  assign halt = IsHalt ;
+  assign known_type = (IsRtype || IsItype || IsIshift || IsStore || IsLoad || IsBranch || IsLui || IsAuiPC || IsJump);
 
-  // assign halt = (!( (IsLoad)|| (IsStore) || (IsBranch)|| (IsJump) || (IsAuiPC) || (IsRtype) || (IsItype)  || (IsIshift) || (IsLui)) ) || (BadAddr); 
+  // halt when unknown type or load a bad address
+  assign halt  = (!( known_type ) )  || (BadAddr); 
     
   // System State (everything is neg assert)
   InstMem IMEM(.Addr(PC), .Size(`SIZE_WORD), .DataOut(InstWord), .CLK(clk));
@@ -166,11 +164,11 @@ module SingleCycleCPU(halt, clk, rst);
   assign funct3 = InstWord[14:12];  // R-Type, I-Type, S-Type, B-Type
   assign funct7 = InstWord[31:25];  // R-Type
 
+  // shamt is unsigned
   assign shamt = { {27{1'b0}} , InstWord[24:20] };   // I-Type (for SLLI, SRLI, SRAI)
 
   // extend the immediate value to 32 bits for I type 
   assign imm_ext = { {20{InstWord[31]}}, InstWord[31:20] };
-  assign imm_ext_unsigned = { {20{1'b0}}, InstWord[31:20] };
 
   // branch offset
   assign imm_branch = { {19{InstWord[31]}} ,InstWord[31], InstWord[7], InstWord[30:25], InstWord[11:8], {1'b0} } << 1 ;
@@ -185,7 +183,7 @@ module SingleCycleCPU(halt, clk, rst);
   assign Aui_PC = PC + Large_imm;
   
   // jal immediate value
-  assign jal_imm =  { {12{InstWord[31]}}, InstWord[31],  InstWord[19:12], InstWord[20], InstWord[30:21]  };
+  assign jal_imm =  { {12{InstWord[31]}}, InstWord[31],  InstWord[19:12], InstWord[20], InstWord[30:21]  } << 2;
 
   // if it is shift then use the shamt if it is isItype then use the immediate value else use rdata2
   assign opB = (IsItype) ? imm_ext 
@@ -194,7 +192,6 @@ module SingleCycleCPU(halt, clk, rst);
 
   // used for store & load
   assign DataAddr = IsStore ? (Rdata1 + store_offset) 
-                  : ( (funct3 == `FUNC_LBU) || (funct3 == `FUNC_LHU) ) ? (Rdata1 + imm_ext_unsigned)
                   : (Rdata1 + imm_ext);
   
   assign MemSize = ( (funct3 == `FUNC_SB ) || (funct3 == `FUNC_LB)  || (funct3==`FUNC_LBU) ) ? `SIZE_BYTE 
@@ -204,8 +201,11 @@ module SingleCycleCPU(halt, clk, rst);
   assign StoreData = Rdata2;
 
   // if load then use dataword & 0xff if byte, 0xffff if half, else dataword
-  assign LoadData = ( (funct3 == `FUNC_LB) || (funct3 == `FUNC_LBU) ) ? (DataWord & 8'hff) 
-                  : ( (funct3 == `FUNC_LH) || (funct3 == `FUNC_LHU) ) ? (DataWord & 16'hffff) 
+  assign LoadData = (  funct3 == `FUNC_LBU ) ? (DataWord & 32'h000000ff) 
+                  : (  funct3 == `FUNC_LHU ) ? (DataWord & 32'h0000ffff) 
+                  // if lb  or lh then should extend with sign
+                  :  ( funct3 == `FUNC_LB ) ?  ( { {24{DataWord[7]}}, DataWord[7:0] } )
+                  :  (funct3 == `FUNC_LH) ?   ( { {16{DataWord[15]}}, DataWord[15:0] } )
                   : DataWord ;
   
   // linked rd = PC + len(inst)
@@ -306,9 +306,9 @@ module ExecutionUnit(out, opA, opB, func, auxFunc, IsRtype, IsItype, IsIshift);
     else if (IsIshift) begin
       case({func, auxFunc})
       // slli 
-      10'b001_0000000: result <= $unsigned(opA) << opB;
+      10'b001_0000000: result <= $unsigned(opA) << $unsigned(opB);
       // srli
-      10'b101_0000000: result <= $unsigned(opA) >> opB;
+      10'b101_0000000: result <= $unsigned(opA) >> $unsigned(opB);
       // srai
       10'b101_0100000: result <= ($signed(opA) >>> $unsigned(opB));
       endcase

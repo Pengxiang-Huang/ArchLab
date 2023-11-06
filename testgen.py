@@ -57,8 +57,7 @@ def Branch_Gen(src1, src2, imm, funct3, opcode):
   if (imm < 0):
     imm = 2**12 + imm 
   imm_binary = format(imm, '012b')
-  inst = imm_binary[11] + imm_binary[4:10] + src2_binary + src1_binary + str(funct3) + imm_binary[0:4] + imm_binary[10] + str(opcode)
-  # print(imm_binary)
+  inst = imm_binary[0] + imm_binary[2:8] + src2_binary + src1_binary + str(funct3) + imm_binary[8:12] + imm_binary[1] + str(opcode)
   return int(inst, 2)
 
 def LUI_Gen(imm, dst, opcode):
@@ -84,10 +83,31 @@ def Sub(dst, src1, src2):
   inst = Rtype_Gen(funct7, src2, src1, funct3, dst, opcode)
   return  inst
 
+def SRA (dst, src1, src2):
+  opcode = '0110011'
+  funct7 = '0100000'
+  funct3 = '101'
+  inst = Rtype_Gen(funct7, src2, src1, funct3, dst, opcode)
+  return  inst
+
 def Sll(dst, src1, src2):
   opcode = '0110011'
   funct7 = '0000000'
   funct3 = '001'
+  inst = Rtype_Gen(funct7, src2, src1, funct3, dst, opcode)
+  return  inst
+
+def Slt(dst, src1, src2):
+  opcode = '0110011'
+  funct7 = '0000000'
+  funct3 = '010'
+  inst = Rtype_Gen(funct7, src2, src1, funct3, dst, opcode)
+  return  inst
+
+def Sltu(dst, src1, src2):
+  opcode = '0110011'
+  funct7 = '0000000'
+  funct3 = '011'
   inst = Rtype_Gen(funct7, src2, src1, funct3, dst, opcode)
   return  inst
 
@@ -135,6 +155,24 @@ def LoadB(dst, src1, offset):
   inst = Load_Gen(src1, offset, funct3, dst, opcode)
   return inst
 
+def LoadBU(dst, src1, offset):
+  opcode = '0000011'
+  funct3 = '100'
+  inst = Load_Gen(src1, offset, funct3, dst, opcode)
+  return inst
+
+def LoadHU(dst, src1, offset):
+  opcode = '0000011'
+  funct3 = '101'
+  inst = Load_Gen(src1, offset, funct3, dst, opcode)
+  return inst
+
+def LoadH(dst, src1, offset):
+  opcode = '0000011'
+  funct3 = '001'
+  inst = Load_Gen(src1, offset, funct3, dst, opcode)
+  return inst
+
 def LoadW(dst, src1, offset):
   opcode = '0000011'
   funct3 = '010'
@@ -163,6 +201,15 @@ def AUIPC(dst, imm):
   inst = LUI_Gen(imm, dst, opcode)
   return inst
 
+def JAL(rd, offset):
+  opcode = '1101111'
+  rd_binary = reg2binary(rd)
+  if (offset < 0):
+    offset = 2**20 + offset 
+  offset_binary = format(offset, '020b')
+  inst = offset_binary[0] + offset_binary[10:20] + offset_binary[9] + offset_binary[1:9] + rd_binary + str(opcode)
+  return int(inst, 2)
+
 def Halt():
   return 0xffffffff
 
@@ -171,12 +218,12 @@ def Regsiter_Gen():
   Registers = [
         0x00000000,  # x0, hardwired to 0
         0x00000008,  # x1, initialized to 1
-        0x00000002,  # x2, initialized to 2
-        0x00000000,  # x3,
-        0x00000000,   # x4
-        0x00000000,  # x5
-        0x00000000,  # x6
-        0x00000000,  # x7
+        0xf000fff2,  # x2, initialized to 2
+        0x00000006,  # x3,
+        0x00000004,   # x4
+        0x00000005,  # x5
+        0x00000003,  # x6
+        0x00000009,  # x7
         # add more as needed
   ]
   remaining = 32 - len(Registers)
@@ -188,31 +235,36 @@ def Regsiter_Gen():
 def Instruction_Gen():
   instructions = []
   ### write the assembly code here to generate the machine code
+  instructions.append(Slt(4,2,3))
+  instructions.append(StoreW(2, 0, 1020))
+  instructions.append(SRA(3, 2, 1))
+  instructions.append(BEQ(0, 1, 3))
+  instructions.append(Addi(1, 1, -1))
+  instructions.append(BNE(0,1,-2))
+  # instructions.append(BNE(0,0,1))
+  # instructions.append(BNE(0,0,1))
+  # instructions.append(BNE(0,0,1))
+  # instructions.append(Sub(6, 4, 5))
+  # instructions.append(BNE(0,0,1))
+  # instructions.append(BNE(0,0,1))
+  # instructions.append(Add(1, 1, 1))
+  # instructions.append(LoadH(1, 0, 1020))
+  # instructions.append(LoadB(3, 0, 8))
+  # instructions.append(LoadW(2, 0, 4))
+  # instructions.append(LoadB(5, 0, 4))
+  # instructions.append(Add(2, 2, 2))
+  # instructions.append(Sub(3, 3, 3))
   # instructions.append(StoreB(2, 0, 1024))
-  instructions.append(Add(3, 1, 2))
-  instructions.append(BNE(0,0,1))
-  instructions.append(BNE(0,0,1))
-  instructions.append(BNE(0,0,1))
-  instructions.append(BNE(0,0,1))
-  instructions.append(Sub(3, 4, 5))
-  instructions.append(BNE(0,0,1))
-  instructions.append(BNE(0,0,1))
-  instructions.append(Add(1, 1, 1))
-  instructions.append(LoadB(4, 0, 4))
-  instructions.append(LoadB(3, 0, 8))
-  instructions.append(LoadW(2, 0, 4))
-  instructions.append(LoadB(5, 0, 4))
-  instructions.append(Add(2, 2, 2))
-  instructions.append(Sub(3, 3, 3))
-  instructions.append(StoreB(2, 0, 1024))
-  instructions.append(StoreB(1, 0, 1023))
-  instructions.append(Addi(1, 0, 1))
-  instructions.append(Srli(1, 1, 1))
-  instructions.append(Add(2, 0, 2))
-  instructions.append(Addi(1, 0, 1))
-  instructions.append(LUI(5, 128))
+  # instructions.append(StoreB(1, 0, 1023))
+  # instructions.append(Addi(1, 0, 1))
+  # instructions.append(Srli(1, 1, 1))
+  # instructions.append(Add(2, 0, 2))
+  instructions.append(Addi(1, 1, -1))
+  instructions.append(Sltu(5, 1, 4))
+  instructions.append(LUI(8, 128))
   instructions.append(AUIPC(5, 128))
   instructions.append(AUIPC(6, 128))
+  instructions.append(JAL(9, 1))
   instructions.append(AUIPC(7, 128))
   instructions.append(Halt())
 
