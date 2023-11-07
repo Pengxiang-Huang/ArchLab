@@ -171,7 +171,7 @@ module SingleCycleCPU(halt, clk, rst);
   assign imm_ext = { {20{InstWord[31]}}, InstWord[31:20] };
 
   // branch offset
-  assign imm_branch = { {19{InstWord[31]}} ,InstWord[31], InstWord[7], InstWord[30:25], InstWord[11:8], {1'b0} } << 1 ;
+  assign imm_branch = { {19{InstWord[31]}} ,InstWord[31], InstWord[7], InstWord[30:25], InstWord[11:8], {1'b0} }  ;
 
   // store offset 
   assign store_offset = { {20{InstWord[31]}}, InstWord[31:25], InstWord[11:7] };
