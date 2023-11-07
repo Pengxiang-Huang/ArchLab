@@ -230,8 +230,8 @@ module SingleCycleCPU(halt, clk, rst);
   // branch taken condition 
   assign beqtaken = ((IsBranch) && (funct3 == `FUNC_BEQ))? (Rdata1 == Rdata2) : 1'b0;
   assign bnetaken = ((IsBranch) && (funct3 == `FUNC_BNE))? (Rdata1 != Rdata2) : 1'b0;
-  assign blttaken = ((IsBranch) && (funct3 == `FUNC_BLT))? (Rdata1 < Rdata2) : 1'b0;
-  assign bgetaken = ((IsBranch) && (funct3 == `FUNC_BGE))? (Rdata1 >= Rdata2) : 1'b0;
+  assign blttaken = ((IsBranch) && (funct3 == `FUNC_BLT))? ($signed(Rdata1) < $signed(Rdata2)) : 1'b0;
+  assign bgetaken = ((IsBranch) && (funct3 == `FUNC_BGE))? ($signed(Rdata1) >= $signed(Rdata2)) : 1'b0;
   assign bltutaken = ((IsBranch) && (funct3 == `FUNC_BLTU))? ($unsigned(Rdata1) < $unsigned(Rdata2)) : 1'b0;
   assign bgeutaken = ((IsBranch) && (funct3 == `FUNC_BGEU) )? ($unsigned(Rdata1) >= $unsigned(Rdata2)) : 1'b0;
 
