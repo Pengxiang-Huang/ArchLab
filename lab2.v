@@ -248,7 +248,7 @@ module SingleCycleCPU(halt, clk, rst);
   assign PC_branch = PC + imm_branch ;
 
   // for the jump instruction, if jarl, PC = (Rdata1 + imm_ext) & -2, else PC = PC + jal_imm
-  assign JNPC = (funct3 == `FUNC_JALR) ? ((Rdata1 + imm_ext) & (-2) ) : (PC + jal_imm);
+  assign JNPC = ( (funct3 == `FUNC_JALR) && (opcode == `OPCODE_JUMPR) ) ? ((Rdata1 + imm_ext) & (-2) ) : (PC + jal_imm);
 
   // only branch and jump should update PC
   assign NPC = (branchTaken) ? PC_branch 
