@@ -11,6 +11,7 @@
 `define OPCODE_LUI        7'b0110111
 `define OPCODE_AUIPC      7'b0010111
 `define OPCODE_JUMP       7'b1101111
+`define OPCODE_JUMPR      7'b1100111
 
 // R-type FUNCT3
 `define FUNC_ADD      3'b000
@@ -138,7 +139,7 @@ module SingleCycleCPU(halt, clk, rst);
 
   assign IsAuiPC = (opcode == `OPCODE_AUIPC);
 
-  assign IsJump = (opcode == `OPCODE_JUMP);
+  assign IsJump = (opcode == `OPCODE_JUMP || opcode == `OPCODE_JUMPR );
 
   assign known_type = (IsRtype || IsItype || IsIshift || IsStore || IsLoad || IsBranch || IsLui || IsAuiPC || IsJump);
 
