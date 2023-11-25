@@ -81,181 +81,159 @@
 `define SIZE_HWORD 2'b01
 `define SIZE_WORD  2'b10
 
-module SingleCycleCPU(halt, clk, rst);
+module PipelinedCPU(halt, clk, rst);
   output halt;
   input clk, rst;
 
-  wire [31:0] PC, InstWord;
-  wire [31:0] DataAddr, StoreData, DataWord;
-  wire [1:0]  MemSize;
-  wire        MemWrEn;
-  
-  wire [4:0]  Rsrc1, Rsrc2, Rdst;
-  wire [31:0] Rdata1, Rdata2, RWrdata;
-  wire [31:0] ALU_Result, LoadData;
-  wire        RWrEn;
 
-  wire [31:0] NPC, PC_Plus_4, PC_branch, JNPC;
+  /**************************IF Stage Begin*************************************/
+  // pipeline registers
+  reg[31:0] IF_ID_InstWord;
+
+  // define module instances
+  wire [31:0] PC , NPC, PC_Plus_4; // PC and NPC
+  wire [31:0] InstWord ; 
+
+  // updating the module intsances
+  assign PC_Plus_4 = PC + 4; // PC + 4
+  assign NPC = PC_Plus_4; // NPC = PC + 4
+  Reg PC_REG(.Din(NPC), .Qout(PC), .WEN(1'b0), .CLK(clk), .RST(rst));
+  InstMem IMEM(.Addr(PC), .Size(`SIZE_WORD), .DataOut(InstWord), .CLK(clk));
+
+  // updating pipeline registers
+  always @(negedge clk) begin
+    IF_ID_InstWord <= InstWord;
+  end
+  /**************************IF Stage End *************************************/
+
+
+
+
+  /**************************ID Stage Begin*************************************/
+  // pipeline registers
+  reg [31:0] ID_EX_OpA, ID_EX_OpB; 
+  reg [2:0]  ID_EX_Func3;
+  reg [6:0]  ID_EX_Func7;
+  reg [4:0]  ID_EX_Rdst; 
+
+  // define module instances
   wire [6:0]  opcode;
-
   wire [6:0]  funct7;
   wire [2:0]  funct3;
-
-  wire signed [31:0] imm_ext;
-  wire signed [31:0] imm_branch;
-  wire signed [31:0] store_offset ;
-  wire [31:0] shamt;
-  wire [31:0] Large_imm, Aui_PC;
-  wire [31:0] jal_imm, link_rd ; 
-
-  wire [31:0] opB;
-  wire branchTaken ; 
-  wire beqtaken, bnetaken, blttaken, bgetaken, bltutaken, bgeutaken;
-
   wire known_type ;
-  wire IsRtype, IsItype, IsIshift, IsStore, IsLoad, IsBranch, IsLui, IsAuiPC, IsJump;
+  wire IsRtype ; 
+  wire [4:0]  Rsrc1_ID, Rsrc2_ID, Rdst_ID, Rdst_actual;
+  wire [31:0] Rdata1_ID, Rdata2_ID, RWrdata_ID;
+  wire        RWrEn_ID;
+  
+  // updating the module intsances
+  assign opcode = IF_ID_InstWord[6:0];
+  assign funct7 = IF_ID_InstWord[31:25];
+  assign funct3 = IF_ID_InstWord[14:12];
+  assign Rsrc1_ID = IF_ID_InstWord[19:15];
+  assign Rsrc2_ID = IF_ID_InstWord[24:20];
+  assign Rdst_ID = IF_ID_InstWord[11:7];
+  assign RWrEn_ID = 1'b0; // not enable in ID stage
+  assign Rdst_actual = WB_Rdst; // get the actual Rdst from WB stage
+  assign RWrdata_ID = WB_ForwardedData; // get the forwarded data from WB stage
 
-  // check types of instructions
   assign IsRtype = (opcode == `OPCODE_COMPUTE) && 
   ( (funct3 == `FUNC_ADD) || (funct3 == `FUNC_SUB) || (funct3 == `FUNC_SLL) || (funct3 == `FUNC_SLT) || (funct3 == `FUNC_SLTU) || (funct3 == `FUNC_XOR) || (funct3 == `FUNC_SRL) || (funct3 == `FUNC_SRA) || (funct3 == `FUNC_OR) || (funct3 == `FUNC_AND) )&& 
   ( (funct7 == `AUX_FUNC_ADD) || (funct7 == `AUX_FUNC_SUB) || (funct7 == `AUX_FUNC_SLL) || (funct7 == `AUX_FUNC_SLT) || (funct7 == `AUX_FUNC_SLTU) || (funct7 == `AUX_FUNC_XOR) || (funct7 == `AUX_FUNC_SRL) || (funct7 == `AUX_FUNC_SRA) || (funct7 == `AUX_FUNC_OR) || (funct7 == `AUX_FUNC_AND));
-  
-  assign IsItype = (opcode == `OPCODE_COMPUTE_I) &&
-  ( (funct3 == `FUNC_ADDI) || (funct3 == `FUNC_SLTI) || (funct3 == `FUNC_SLTIU) || (funct3 == `FUNC_XORI) || (funct3 == `FUNC_ORI) || (funct3 == `FUNC_ANDI) );
 
-  assign IsIshift = (opcode == `OPCODE_COMPUTE_I) && 
-  ((funct3 == `FUNC_SLLI) || (funct3 == `FUNC_SRLI) || (funct3 == `FUNC_SRAI) ) && ((funct7 == `AUX_FUNC_SLLI) || (funct7 == `AUX_FUNC_SRLI) || (funct7 == `AUX_FUNC_SRAI));
+  assign known_type = IsRtype ;
+  assign halt = !(known_type) ;
 
-  assign IsStore = (opcode == `OPCODE_STORE) &&
-  ( (funct3 == `FUNC_SB) || (funct3 == `FUNC_SH) || (funct3 == `FUNC_SW) );
+  RegFile RF(.AddrA(Rsrc1_ID), .DataOutA(Rdata1_ID), 
+      .AddrB(Rsrc2_ID), .DataOutB(Rdata2_ID), 
+      .AddrW(Rdst_actual), .DataInW(RWrdata_ID), .WenW(RWrEn_ID), .CLK(clk));
 
-  assign IsLoad = (opcode == `OPCODE_LOAD) && 
-  ( (funct3 == `FUNC_LB) || (funct3 == `FUNC_LH) || (funct3 == `FUNC_LW) || (funct3 == `FUNC_LBU) || (funct3 == `FUNC_LHU) );
-
-  assign IsBranch = (opcode == `OPCODE_BRANCH) && 
-  (funct3 == `FUNC_BEQ || funct3 == `FUNC_BNE || funct3 == `FUNC_BLT || funct3 == `FUNC_BGE || funct3 == `FUNC_BLTU || funct3 == `FUNC_BGEU);
-
-  assign IsLui = (opcode == `OPCODE_LUI);
-
-  assign IsAuiPC = (opcode == `OPCODE_AUIPC);
-
-  assign IsJump = (opcode == `OPCODE_JUMP || opcode == `OPCODE_JUMPR );
-
-  assign known_type = (IsRtype || IsItype || IsIshift || IsStore || IsLoad || IsBranch || IsLui || IsAuiPC || IsJump);
-
-  // halt when unknown type or load a bad address
-  assign halt  = (!( known_type ) )  || (BadAddr); 
-    
-  // System State (everything is neg assert)
-  InstMem IMEM(.Addr(PC), .Size(`SIZE_WORD), .DataOut(InstWord), .CLK(clk));
-  DataMem DMEM(.Addr(DataAddr), .Size(MemSize), .DataIn(StoreData), .DataOut(DataWord), .WEN(MemWrEn), .CLK(clk));
-
-  RegFile RF(.AddrA(Rsrc1), .DataOutA(Rdata1), 
-      .AddrB(Rsrc2), .DataOutB(Rdata2), 
-      .AddrW(Rdst), .DataInW(RWrdata), .WenW(RWrEn), .CLK(clk));
-
-  Reg PC_REG(.Din(NPC), .Qout(PC), .WEN(1'b0), .CLK(clk), .RST(rst));
+  // updating pipeline registers
+  always @(negedge clk) begin
+    ID_EX_OpA <= Rdata1_ID;
+    ID_EX_OpB <= Rdata2_ID;
+    ID_EX_Func3 <= funct3;
+    ID_EX_Func7 <= funct7;
+    ID_EX_Rdst <= Rdst_ID;
+  end
+  /**************************ID Stage End *************************************/
 
 
-  // Instruction Decode
-  assign opcode = InstWord[6:0];   
-  assign Rdst = InstWord[11:7]; 
-  assign Rsrc1 = InstWord[19:15]; 
-  assign Rsrc2 = InstWord[24:20];  
-  assign funct3 = InstWord[14:12];  // R-Type, I-Type, S-Type, B-Type
-  assign funct7 = InstWord[31:25];  // R-Type
 
-  // shamt is unsigned
-  assign shamt = { {27{1'b0}} , InstWord[24:20] };   // I-Type (for SLLI, SRLI, SRAI)
 
-  // extend the immediate value to 32 bits for I type 
-  assign imm_ext = { {20{InstWord[31]}}, InstWord[31:20] };
+  /**************************EX Stage Begin*************************************/
+  // pipeline registers
+  reg [31:0] EX_MEM_ALUresult;
+  reg [4:0]  EX_MEM_Rdst;
 
-  // branch offset
-  assign imm_branch = { {19{InstWord[31]}} ,InstWord[31], InstWord[7], InstWord[30:25], InstWord[11:8], {1'b0} }  ;
+  // define module instances
+  wire [31:0] ALUresult;
+  wire [4:0] Rdst_EX;
+  wire [31:0] OpA, OpB;
+  wire [2:0]  func_EX;
+  wire [6:0]  auxFunc_EX;
+  wire IsRtype_EX;
 
-  // store offset 
-  assign store_offset = { {20{InstWord[31]}}, InstWord[31:25], InstWord[11:7] };
+  // updating the module intsances
+  assign OpA = ID_EX_OpA;
+  assign OpB = ID_EX_OpB;
+  assign func_EX = ID_EX_Func3;
+  assign auxFunc_EX = ID_EX_Func7;
+  assign IsRtype_EX = 1'b1;
+  assign Rdst_EX = ID_EX_Rdst;
+  ExecutionUnit EU(.out(ALUresult), .opA(OpA), .opB(OpB), .func(ID_EX_Func3), .auxFunc(ID_EX_Func7), .IsRtype(IsRtype), .IsItype(1'b0), .IsIshift(1'b0));
 
-  // lui immediate value
-  assign Large_imm = { {12{InstWord[31]}}, InstWord[31:12] } ;
+  // updating pipeline registers
+  always @(negedge clk) begin
+    EX_MEM_ALUresult <= ALUresult;
+    EX_MEM_Rdst <= Rdst_EX;
+  end
+  /**************************EX Stage End**************************************/
 
-  // auipc
-  assign Aui_PC = PC + Large_imm;
-  
-  // jal immediate value
-  assign jal_imm =  { {12{InstWord[31]}}, InstWord[31],  InstWord[19:12], InstWord[20], InstWord[30:21]  } << 2;
 
-  // if it is shift then use the shamt if it is isItype then use the immediate value else use rdata2
-  assign opB = (IsItype) ? imm_ext 
-              : (IsIshift) ? shamt 
-              : Rdata2;
+  /*************************MEM Stage Begin*************************************/
+  // pipeline registers
+  reg [31:0] MEM_WB_ALUresult;
+  reg [4:0]  MEM_WB_Rdst;
 
-  // used for store & load
-  assign DataAddr = IsStore ? (Rdata1 + store_offset) 
-                  : (Rdata1 + imm_ext);
-  
-  assign MemSize = ( (funct3 == `FUNC_SB ) || (funct3 == `FUNC_LB)  || (funct3==`FUNC_LBU) ) ? `SIZE_BYTE 
-                  : ( (funct3 == `FUNC_SH) || (funct3 == `FUNC_LH) || (funct3 ==`FUNC_LHU) ) ? `SIZE_HWORD 
-                  : `SIZE_WORD;
-  
-  assign StoreData = Rdata2;
+  // define module instances
+  wire [31:0] ALUresult_MEM;
+  wire [4:0] Rdst_MEM;
 
-  // if load then use dataword & 0xff if byte, 0xffff if half, else dataword
-  assign LoadData = (  funct3 == `FUNC_LBU ) ? (DataWord & 32'h000000ff) 
-                  : (  funct3 == `FUNC_LHU ) ? (DataWord & 32'h0000ffff) 
-                  // if lb  or lh then should extend with sign
-                  :  ( funct3 == `FUNC_LB ) ?  ( { {24{DataWord[7]}}, DataWord[7:0] } )
-                  :  (funct3 == `FUNC_LH) ?   ( { {16{DataWord[15]}}, DataWord[15:0] } )
-                  : DataWord ;
-  
-  // linked rd = PC + len(inst)
-  assign link_rd = PC + 4;
+  // updating the module intsances
+  assign ALUresult_MEM = EX_MEM_ALUresult;
+  assign Rdst_MEM = EX_MEM_Rdst;
 
-  // check if it is load or lui or auipc or j type, else use alu result (R and I type)
-  assign RWrdata = (IsLoad) ? LoadData 
-                  : (IsLui) ? ( Large_imm << 12) 
-                  : (IsAuiPC) ? Aui_PC 
-                  : (IsJump) ? link_rd 
-                  : ALU_Result;
-  
-  // any load addr should div by 4
-  assign BadAddr = (IsLoad) ? (DataAddr[1:0] != 2'b00) : 1'b0;
+  // updating pipeline registers
+  always @(negedge clk) begin
+    MEM_WB_ALUresult <= ALUresult_MEM;
+    MEM_WB_Rdst <= Rdst_MEM;
+  end
+  /*************************MEM Stage End***************************************/
 
-  // only store should write to the memory
-  assign MemWrEn = !IsStore ; 
 
-  // only branch and store not update registers 
-  assign RWrEn = (IsBranch || IsStore);
+  /*************************WB Stage Begin**************************************/
+  // pipeline registers
+  reg [31:0] WB_ForwardedData;
+  reg [4:0]  WB_Rdst;
 
-  // branch taken condition 
-  assign beqtaken = ((IsBranch) && (funct3 == `FUNC_BEQ))? (Rdata1 == Rdata2) : 1'b0;
-  assign bnetaken = ((IsBranch) && (funct3 == `FUNC_BNE))? (Rdata1 != Rdata2) : 1'b0;
-  assign blttaken = ((IsBranch) && (funct3 == `FUNC_BLT))? ($signed(Rdata1) < $signed(Rdata2)) : 1'b0;
-  assign bgetaken = ((IsBranch) && (funct3 == `FUNC_BGE))? ($signed(Rdata1) >= $signed(Rdata2)) : 1'b0;
-  assign bltutaken = ((IsBranch) && (funct3 == `FUNC_BLTU))? ($unsigned(Rdata1) < $unsigned(Rdata2)) : 1'b0;
-  assign bgeutaken = ((IsBranch) && (funct3 == `FUNC_BGEU) )? ($unsigned(Rdata1) >= $unsigned(Rdata2)) : 1'b0;
+  // define module instances
+  wire [31:0] ALUresult_WB;
+  wire [4:0]  Rdst_WB;
+  wire RWrEn_WB;
 
-  // any of branch taken is true then taken 
-  assign branchTaken = ( (beqtaken) || (bnetaken) || (blttaken) || (bgetaken) || (bltutaken) || (bgeutaken) );
+  // updating the module intsances
+  assign ALUresult_WB = MEM_WB_ALUresult;
+  assign Rdst_WB = MEM_WB_Rdst;
+  assign RWrEn_WB = 1'b0; // enable in WB stage
 
-  // Hardwired to support R-Type and I-type instructions
-  ExecutionUnit EU(.out(ALU_Result), .opA(Rdata1), .opB(opB), .func(funct3), .auxFunc(funct7), 
-                  .IsRtype(IsRtype), .IsItype(IsItype), .IsIshift(IsIshift));
-
-  // Fetch Address Datapath
-  assign PC_Plus_4 = PC + 4;
-  assign PC_branch = PC + imm_branch ;
-
-  // for the jump instruction, if jarl, PC = (Rdata1 + imm_ext) & -2, else PC = PC + jal_imm
-  assign JNPC = ( (funct3 == `FUNC_JALR) && (opcode == `OPCODE_JUMPR) ) ? ((Rdata1 + imm_ext) & (-2) ) : (PC + jal_imm);
-
-  // only branch and jump should update PC
-  assign NPC = (branchTaken) ? PC_branch 
-              : (IsJump) ? (JNPC) 
-              : PC_Plus_4;
-   
-endmodule // SingleCycleCPU
+  // forward the data to the ID state in order to write back 
+  always @(negedge clk) begin
+    WB_ForwardedData <= ALUresult_WB;
+    WB_Rdst <= Rdst_WB;
+  end
+  /*************************WB Stage End****************************************/
+endmodule // PipelinedCPU
 
 
 // EU provide ALU result for R and I type instructions
