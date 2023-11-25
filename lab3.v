@@ -115,13 +115,16 @@ module PipelinedCPU(halt, clk, rst);
   reg [2:0]  ID_EX_Func3;
   reg [6:0]  ID_EX_Func7;
   reg [4:0]  ID_EX_Rdst; 
+  reg ID_EX_IsRtype, ID_EX_IsItype, ID_EX_IsIshift;
 
   // define module instances
   wire [6:0]  opcode;
   wire [6:0]  funct7;
   wire [2:0]  funct3;
   wire known_type ;
-  wire IsRtype ; 
+  wire IsRtype , IsItype , IsIshift ;
+  wire [31:0] shamt;
+  wire signed [31:0] imm_ext;
   wire [4:0]  Rsrc1_ID, Rsrc2_ID, Rdst_ID, Rdst_actual;
   wire [31:0] Rdata1_ID, Rdata2_ID, RWrdata_ID;
   wire        RWrEn_ID;
@@ -130,6 +133,8 @@ module PipelinedCPU(halt, clk, rst);
   assign opcode = IF_ID_InstWord[6:0];
   assign funct7 = IF_ID_InstWord[31:25];
   assign funct3 = IF_ID_InstWord[14:12];
+  assign shamt = { {27{1'b0}} , IF_ID_InstWord[24:20] };   // shift amount for I type
+  assign imm_ext = { {20{IF_ID_InstWord[31]}}, IF_ID_InstWord[31:20] }; // sign extension for I type
   assign Rsrc1_ID = IF_ID_InstWord[19:15];
   assign Rsrc2_ID = IF_ID_InstWord[24:20];
   assign Rdst_ID = IF_ID_InstWord[11:7];
@@ -141,7 +146,14 @@ module PipelinedCPU(halt, clk, rst);
   ( (funct3 == `FUNC_ADD) || (funct3 == `FUNC_SUB) || (funct3 == `FUNC_SLL) || (funct3 == `FUNC_SLT) || (funct3 == `FUNC_SLTU) || (funct3 == `FUNC_XOR) || (funct3 == `FUNC_SRL) || (funct3 == `FUNC_SRA) || (funct3 == `FUNC_OR) || (funct3 == `FUNC_AND) )&& 
   ( (funct7 == `AUX_FUNC_ADD) || (funct7 == `AUX_FUNC_SUB) || (funct7 == `AUX_FUNC_SLL) || (funct7 == `AUX_FUNC_SLT) || (funct7 == `AUX_FUNC_SLTU) || (funct7 == `AUX_FUNC_XOR) || (funct7 == `AUX_FUNC_SRL) || (funct7 == `AUX_FUNC_SRA) || (funct7 == `AUX_FUNC_OR) || (funct7 == `AUX_FUNC_AND));
 
-  assign known_type = IsRtype ;
+  assign IsItype = (opcode == `OPCODE_COMPUTE_I) &&
+  ( (funct3 == `FUNC_ADDI) || (funct3 == `FUNC_SLTI) || (funct3 == `FUNC_SLTIU) || (funct3 == `FUNC_XORI) || (funct3 == `FUNC_ORI) || (funct3 == `FUNC_ANDI) );
+  
+  assign IsIshift = (opcode == `OPCODE_COMPUTE_I) && 
+  ((funct3 == `FUNC_SLLI) || (funct3 == `FUNC_SRLI) || (funct3 == `FUNC_SRAI) ) && ((funct7 == `AUX_FUNC_SLLI) || (funct7 == `AUX_FUNC_SRLI) || (funct7 == `AUX_FUNC_SRAI));
+
+
+  assign known_type = (IsRtype || IsItype || IsIshift) ;
   assign halt = !(known_type) ;
 
   RegFile RF(.AddrA(Rsrc1_ID), .DataOutA(Rdata1_ID), 
@@ -151,10 +163,13 @@ module PipelinedCPU(halt, clk, rst);
   // updating pipeline registers
   always @(negedge clk) begin
     ID_EX_OpA <= Rdata1_ID;
-    ID_EX_OpB <= Rdata2_ID;
+    ID_EX_OpB <= (IsRtype) ? Rdata2_ID : (IsItype) ? imm_ext : shamt; // select the correct operand
     ID_EX_Func3 <= funct3;
     ID_EX_Func7 <= funct7;
     ID_EX_Rdst <= Rdst_ID;
+    ID_EX_IsRtype <= IsRtype;
+    ID_EX_IsItype <= IsItype;
+    ID_EX_IsIshift <= IsIshift;
   end
   /**************************ID Stage End *************************************/
 
@@ -172,17 +187,18 @@ module PipelinedCPU(halt, clk, rst);
   wire [31:0] OpA, OpB;
   wire [2:0]  func_EX;
   wire [6:0]  auxFunc_EX;
-  wire IsRtype_EX;
+  wire IsRtype_EX, IsItype_EX, IsIshift_EX;
 
   // updating the module intsances
   assign OpA = ID_EX_OpA;
   assign OpB = ID_EX_OpB;
   assign func_EX = ID_EX_Func3;
   assign auxFunc_EX = ID_EX_Func7;
-  assign IsRtype_EX = 1'b1;
+  assign IsRtype_EX = ID_EX_IsRtype;
+  assign IsItype_EX = ID_EX_IsItype;
+  assign IsIshift_EX = ID_EX_IsIshift;
   assign Rdst_EX = ID_EX_Rdst;
-  ExecutionUnit EU(.out(ALUresult), .opA(OpA), .opB(OpB), .func(ID_EX_Func3), .auxFunc(ID_EX_Func7), .IsRtype(IsRtype), .IsItype(1'b0), .IsIshift(1'b0));
-
+  ExecutionUnit EU(.out(ALUresult), .opA(OpA), .opB(OpB), .func(ID_EX_Func3), .auxFunc(ID_EX_Func7), .IsRtype(IsRtype_EX), .IsItype(IsItype_EX), .IsIshift(IsIshift_EX));
   // updating pipeline registers
   always @(negedge clk) begin
     EX_MEM_ALUresult <= ALUresult;
@@ -232,6 +248,13 @@ module PipelinedCPU(halt, clk, rst);
     WB_ForwardedData <= ALUresult_WB;
     WB_Rdst <= Rdst_WB;
   end
+
+  
+
+
+
+
+
   /*************************WB Stage End****************************************/
 endmodule // PipelinedCPU
 
