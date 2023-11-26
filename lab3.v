@@ -142,7 +142,7 @@ module PipelinedCPU(halt, clk, rst);
   assign Rsrc1_ID = IF_ID_InstWord[19:15];
   assign Rsrc2_ID = IF_ID_InstWord[24:20];
   assign Rdst_ID = IF_ID_InstWord[11:7];
-  assign RWrEn_ID = 1'b0; 
+  assign RWrEn_ID = 1'b0; // disable write back when load
   assign Rdst_actual = WB_Rdst; // get the actual Rdst from WB stage
   assign RWrdata_ID = WB_ForwardedData; // get the forwarded data from WB stage
   assign store_offset = { {20{IF_ID_InstWord[31]}}, IF_ID_InstWord[31:25], IF_ID_InstWord[11:7] };
@@ -177,11 +177,11 @@ module PipelinedCPU(halt, clk, rst);
 
   // updating pipeline registers
   always @(negedge clk) begin
-    ID_EX_OpA <=  Rdata1_ID; // resolve hazard
-    ID_EX_OpB <= (IsRtype) ? Rdata2_ID 
+    ID_EX_OpA <=  (Rdst_actual === Rsrc1_ID) ? RWrdata_ID : Rdata1_ID; // enable data forwarding to resolve data hazard
+    ID_EX_OpB <= (IsRtype) ? (Rdst_actual === Rsrc2_ID) ? RWrdata_ID : Rdata2_ID
                 : (IsItype) ? imm_ext 
                 : (IsIshift) ? shamt 
-                : (IsStore) ? Rdata2_ID 
+                : (IsStore) ? (Rdst_actual === Rsrc2_ID) ? RWrdata_ID : Rdata2_ID
                 : (IsLoad) ? imm_ext 
                 : 32'b0; // get the operand B
     ID_EX_Func3 <= funct3;
@@ -223,7 +223,10 @@ module PipelinedCPU(halt, clk, rst);
   wire BadAddr_EX;
 
   // updating the module intsances
-  assign OpA =  (EX_MEM_Rdst === ID_EX_Rsrc1) ? EX_MEM_ALUresult : ID_EX_OpA; // resolve data hazard
+  assign OpA = (EX_MEM_Rdst === ID_EX_Rsrc1) ? EX_MEM_ALUresult 
+              : (MEM_WB_Rdst === ID_EX_Rsrc1) ? MEM_WB_ALUresult 
+              : (WB_Rdst === ID_EX_Rsrc1) ? WB_ForwardedData
+              : ID_EX_OpA; // enable data forwarding to resolve data hazard
   assign OpB =  (EX_MEM_Rdst === ID_EX_Rsrc2) ? EX_MEM_ALUresult : ID_EX_OpB; // resolve data hazard
   assign func_EX = ID_EX_Func3;
   assign auxFunc_EX = ID_EX_Func7;
