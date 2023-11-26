@@ -115,7 +115,7 @@ module PipelinedCPU(halt, clk, rst);
   reg signed [31:0] ID_EX_store_offset;
   reg [2:0]  ID_EX_Func3;
   reg [6:0]  ID_EX_Func7;
-  reg [4:0]  ID_EX_Rdst; 
+  reg [4:0]  ID_EX_Rdst, ID_EX_Rsrc1, ID_EX_Rsrc2; 
   reg [1:0]  ID_EX_MemSize;
   reg ID_EX_IsRtype, ID_EX_IsItype, ID_EX_IsIshift , ID_EX_IsStore, ID_EX_IsLoad;
 
@@ -177,11 +177,18 @@ module PipelinedCPU(halt, clk, rst);
 
   // updating pipeline registers
   always @(negedge clk) begin
-    ID_EX_OpA <= Rdata1_ID;
-    ID_EX_OpB <= (IsRtype) ? Rdata2_ID : (IsItype) ? imm_ext : (IsIshift) ? shamt : (IsStore) ? Rdata2_ID : (IsLoad) ? imm_ext : 32'b0; // get the operand B
+    ID_EX_OpA <=  Rdata1_ID; // resolve hazard
+    ID_EX_OpB <= (IsRtype) ? Rdata2_ID 
+                : (IsItype) ? imm_ext 
+                : (IsIshift) ? shamt 
+                : (IsStore) ? Rdata2_ID 
+                : (IsLoad) ? imm_ext 
+                : 32'b0; // get the operand B
     ID_EX_Func3 <= funct3;
     ID_EX_Func7 <= funct7;
     ID_EX_Rdst <= Rdst_ID;
+    ID_EX_Rsrc1 <= Rsrc1_ID;
+    ID_EX_Rsrc2 <= Rsrc2_ID;
     ID_EX_IsRtype <= IsRtype;
     ID_EX_IsItype <= IsItype;
     ID_EX_IsIshift <= IsIshift;
@@ -200,6 +207,7 @@ module PipelinedCPU(halt, clk, rst);
   reg [31:0] EX_MEM_ALUresult;
   reg [31:0] EX_MEM_Store_Data;
   reg [4:0]  EX_MEM_Rdst;
+  reg [4:0]  Old_Rdst;
   reg signed [31:0] EX_MEM_DataAddr;
   reg [1:0] EX_MEM_MemSize;
   reg EX_MEM_IsStore, EX_MEM_IsLoad;
@@ -215,8 +223,8 @@ module PipelinedCPU(halt, clk, rst);
   wire BadAddr_EX;
 
   // updating the module intsances
-  assign OpA = ID_EX_OpA;
-  assign OpB = ID_EX_OpB;
+  assign OpA =  (EX_MEM_Rdst === ID_EX_Rsrc1) ? EX_MEM_ALUresult : ID_EX_OpA; // resolve data hazard
+  assign OpB =  (EX_MEM_Rdst === ID_EX_Rsrc2) ? EX_MEM_ALUresult : ID_EX_OpB; // resolve data hazard
   assign func_EX = ID_EX_Func3;
   assign auxFunc_EX = ID_EX_Func7;
   assign IsRtype_EX = ID_EX_IsRtype;
