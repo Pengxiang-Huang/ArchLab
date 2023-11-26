@@ -227,7 +227,10 @@ module PipelinedCPU(halt, clk, rst);
               : (MEM_WB_Rdst === ID_EX_Rsrc1) ? MEM_WB_ALUresult 
               : (WB_Rdst === ID_EX_Rsrc1) ? WB_ForwardedData
               : ID_EX_OpA; // enable data forwarding to resolve data hazard
-  assign OpB =  (EX_MEM_Rdst === ID_EX_Rsrc2) ? EX_MEM_ALUresult : ID_EX_OpB; // resolve data hazard
+  assign OpB =  (EX_MEM_Rdst === ID_EX_Rsrc2) ? EX_MEM_ALUresult 
+              : (MEM_WB_Rdst === ID_EX_Rsrc2) ? MEM_WB_ALUresult
+              : (WB_Rdst === ID_EX_Rsrc2) ? WB_ForwardedData
+              : ID_EX_OpB; // enable data forwarding to resolve data hazard
   assign func_EX = ID_EX_Func3;
   assign auxFunc_EX = ID_EX_Func7;
   assign IsRtype_EX = ID_EX_IsRtype;
