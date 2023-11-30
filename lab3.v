@@ -134,14 +134,16 @@ module PipelinedCPU(halt, clk, rst);
   reg [6:0]  ID_EX_Func7;
   reg [4:0]  ID_EX_Rdst, ID_EX_Rsrc1, ID_EX_Rsrc2; 
   reg [1:0]  ID_EX_MemSize;
-  reg ID_EX_IsRtype, ID_EX_IsItype, ID_EX_IsIshift , ID_EX_IsStore, ID_EX_IsLoad, ID_EX_IsBranch;
+  reg ID_EX_IsRtype, ID_EX_IsItype, ID_EX_IsIshift , ID_EX_IsStore, ID_EX_IsLoad, ID_EX_IsBranch, ID_EX_IsLui;
+  reg ID_EX_halt_signal ;
+  reg [31:0] ID_EX_LargeImm;
 
   // define module instances
   wire [6:0]  opcode;
   wire [6:0]  funct7;
   wire [2:0]  funct3;
   wire known_type ;
-  wire IsRtype , IsItype , IsIshift, IsStore, IsLoad, IsBranch ;
+  wire IsRtype , IsItype , IsIshift, IsStore, IsLoad, IsBranch, IsLui ;
   wire [31:0] shamt;
   wire signed [31:0] imm_ext;
   wire signed [31:0] store_offset ;
@@ -149,6 +151,7 @@ module PipelinedCPU(halt, clk, rst);
   wire [4:0]  Rsrc1_ID, Rsrc2_ID, Rdst_ID, Rdst_actual;
   wire [31:0] Rdata1_ID, Rdata2_ID, RWrdata_ID;
   wire [31:0] Rdata1_fresh, Rdata2_fresh; // to resolve data hazard
+  wire [31:0] LargeImm;
   wire        RWrEn_ID;
   wire [1:0]  MemSize;
 
@@ -163,9 +166,14 @@ module PipelinedCPU(halt, clk, rst);
   assign Rdst_ID = IF_ID_InstWord[11:7];
   assign RWrEn_ID = (WB_ID_IsStore) ;// only store is not enable for register update 
   assign Rdst_actual = WB_Rdst; // get the actual Rdst from WB stage
+
   assign RWrdata_ID = WB_ForwardedData; // get the forwarded data from WB stage
+
   assign store_offset = { {20{IF_ID_InstWord[31]}}, IF_ID_InstWord[31:25], IF_ID_InstWord[11:7] };
-  assign imm_branch = { {19{IF_ID_InstWord[31]}} ,IF_ID_InstWord[31], IF_ID_InstWord[7], IF_ID_InstWord[30:25], IF_ID_InstWord[11:8], {1'b0} }  ;
+  assign imm_branch = { {19{IF_ID_InstWord[31]}} ,IF_ID_InstWord[31], IF_ID_InstWord[7], IF_ID_InstWord[30:25], IF_ID_InstWord[11:8], {1'b0} } ;
+  
+  // lui immediate value
+  assign LargeImm= ( { {12{IF_ID_InstWord[31]}}, IF_ID_InstWord[31:12] }  << 12);
 
   assign IsRtype = (opcode == `OPCODE_COMPUTE) && 
   ( (funct3 == `FUNC_ADD) || (funct3 == `FUNC_SUB) || (funct3 == `FUNC_SLL) || (funct3 == `FUNC_SLT) || (funct3 == `FUNC_SLTU) || (funct3 == `FUNC_XOR) || (funct3 == `FUNC_SRL) || (funct3 == `FUNC_SRA) || (funct3 == `FUNC_OR) || (funct3 == `FUNC_AND) )&& 
@@ -186,9 +194,12 @@ module PipelinedCPU(halt, clk, rst);
   assign IsBranch = (opcode == `OPCODE_BRANCH) && 
   (funct3 == `FUNC_BEQ || funct3 == `FUNC_BNE || funct3 == `FUNC_BLT || funct3 == `FUNC_BGE || funct3 == `FUNC_BLTU || funct3 == `FUNC_BGEU);
 
+  assign IsLui = (opcode == `OPCODE_LUI);
 
-  assign known_type = (IsRtype || IsItype || IsIshift || IsStore || IsLoad || IsBranch ) ;
-  assign halt = !(known_type) ;
+  assign known_type = (IsRtype || IsItype || IsIshift || IsStore || IsLoad || IsBranch || IsLui ) ;
+
+  // halt after 4 cycles after ID to ensure instruction before is finished
+  assign halt = WB_ID_haltsignal ;
 
   assign MemSize = ( (funct3 == `FUNC_SB ) || (funct3 == `FUNC_LB)  || (funct3==`FUNC_LBU) ) ? `SIZE_BYTE 
                   : ( (funct3 == `FUNC_SH) || (funct3 == `FUNC_LH) || (funct3 ==`FUNC_LHU) ) ? `SIZE_HWORD 
@@ -243,10 +254,13 @@ module PipelinedCPU(halt, clk, rst);
       ID_EX_IsStore <= IsStore;
       ID_EX_IsLoad <= IsLoad;
       ID_EX_IsBranch <= IsBranch;
+      ID_EX_IsLui <= IsLui;
       ID_EX_store_offset <= store_offset;
       ID_EX_branch_offset <= imm_branch;
       ID_EX_MemSize <= MemSize;
       Old_PC_ID <= Old_PC_IF;
+      ID_EX_halt_signal <=  !(known_type) ;
+      ID_EX_LargeImm <= LargeImm;
     end
   end
   /**************************ID Stage End *************************************/
@@ -266,6 +280,9 @@ module PipelinedCPU(halt, clk, rst);
   reg EX_IF_BranchTaken ;
   reg signed [31:0] EX_IF_branch_offset;
   reg [31:0] EX_IF_PC ; 
+  reg EX_MEM_halt_signal ;
+  reg EX_MEM_IsLui ; 
+  reg [31:0]  EX_MEM_LargeImm ;
 
   // define module instances
   wire [31:0] ALUresult;
@@ -326,6 +343,9 @@ module PipelinedCPU(halt, clk, rst);
     EX_IF_branch_offset <= ID_EX_branch_offset;
     EX_MEM_Func3 <= ID_EX_Func3;
     EX_IF_PC <= Old_PC_ID;
+    EX_MEM_halt_signal <= ID_EX_halt_signal ;
+    EX_MEM_IsLui <= ID_EX_IsLui ;
+    EX_MEM_LargeImm <= ID_EX_LargeImm ;
   end
   /**************************EX Stage End**************************************/
 
@@ -336,6 +356,9 @@ module PipelinedCPU(halt, clk, rst);
   reg [31:0] MEM_WB_LoadData;
   reg [4:0]  MEM_WB_Rdst;
   reg MEM_WB_IsLoad, MEM_WB_IsStore;
+  reg MEM_WB_halt_signal ;
+  reg [31:0] MEM_WB_LargeImm ;
+  reg MEM_WB_IsLui ;
 
   // define module instances
   wire [31:0] DataAddr_MEM;
@@ -368,6 +391,9 @@ module PipelinedCPU(halt, clk, rst);
     ) ;
     MEM_WB_IsLoad <= EX_MEM_IsLoad;
     MEM_WB_IsStore <= EX_MEM_IsStore;
+    MEM_WB_halt_signal <= EX_MEM_halt_signal ;
+    MEM_WB_LargeImm <= EX_MEM_LargeImm ;
+    MEM_WB_IsLui <= EX_MEM_IsLui ;
   end
   /*************************MEM Stage End***************************************/
 
@@ -377,22 +403,30 @@ module PipelinedCPU(halt, clk, rst);
   reg [31:0] WB_ForwardedData;
   reg [4:0]  WB_Rdst;
   reg WB_ID_IsStore ; 
+  reg WB_ID_haltsignal ;
 
   // define module instances
   wire [31:0] ALUresult_WB;
   wire [4:0]  Rdst_WB;
-  wire IsLoad_WB;
+  wire IsLoad_WB, IsLui_WB;
+  wire [31:0] LargeImm_WB ;
 
   // updating the module intsances
   assign ALUresult_WB = MEM_WB_ALUresult;
   assign Rdst_WB = MEM_WB_Rdst;
   assign IsLoad_WB = MEM_WB_IsLoad;
+  assign IsLui_WB = MEM_WB_IsLui ;
+  assign LargeImm_WB = MEM_WB_LargeImm ;
+
 
   // forward the data to the ID state in order to write back 
   always @(negedge clk) begin
-    WB_ForwardedData <= (IsLoad_WB) ? MEM_WB_LoadData : ALUresult_WB;
+    WB_ForwardedData <= (IsLoad_WB) ? MEM_WB_LoadData
+                        : (IsLui_WB) ? LargeImm_WB
+                        : ALUresult_WB;
     WB_Rdst <= Rdst_WB;
     WB_ID_IsStore <= MEM_WB_IsStore;
+    WB_ID_haltsignal <= MEM_WB_halt_signal ;
   end
   /*************************WB Stage End****************************************/
 endmodule // PipelinedCPU

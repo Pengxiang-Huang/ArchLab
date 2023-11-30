@@ -55,15 +55,27 @@ class Instruction:
     inst = imm_binary + src1_binary + str(funct3) + dst_binary + str(opcode)
     return int(inst, 2)
 
+  # def Branch_Gen(self, src1, src2, imm, funct3, opcode):
+  #   src1_binary = self.reg2binary(src1)
+  #   src2_binary = self.reg2binary(src2)
+  #   if (imm < 0):
+  #     imm = 2**12 + imm 
+  #   imm_binary = format(imm, '012b')
+  #   print("the branch gen offset if not sure!! pls figure out the encoding")
+  #   exit(1)
+  #   # inst = '0' + imm_binary[1:7] + src2_binary + src1_binary + str(funct3) + imm_binary[7:11] + imm_binary[0] + str(opcode)
+  #   return int(inst, 2)
   def Branch_Gen(self, src1, src2, imm, funct3, opcode):
     src1_binary = self.reg2binary(src1)
     src2_binary = self.reg2binary(src2)
     if (imm < 0):
       imm = 2**12 + imm 
     imm_binary = format(imm, '012b')
-    print("the branch gen offset if not sure!! pls figure out the encoding")
-    exit(1)
-    # inst = '0' + imm_binary[1:7] + src2_binary + src1_binary + str(funct3) + imm_binary[7:11] + imm_binary[0] + str(opcode)
+    # print("the branch gen offset if not sure!! pls figure out the encoding")
+    # exit(1)
+  
+    inst = '0' + imm_binary[1:7] + src2_binary + src1_binary + str(funct3) + imm_binary[7:11] + imm_binary[0] + str(opcode)
+
     return int(inst, 2)
 
   def LUI_Gen(self, imm, dst, opcode):
@@ -125,10 +137,70 @@ class Instruction:
     inst = self.Rtype_Gen(funct7, src2, src1, funct3, dst, opcode)
     self.myinst.append(inst)
     return  inst
+  
+  def Xor(self, dst, src1, src2):
+    opcode = '0110011'
+    funct7 = '0000000'
+    funct3 = '100'
+    inst = self.Rtype_Gen(funct7, src2, src1, funct3, dst, opcode)
+    self.myinst.append(inst)
+    return  inst
+  
+  def Srl(self,dst, src1, src2):
+    opcode = '0110011'
+    funct7 = '0000000'
+    funct3 = '101'
+    inst = self.Rtype_Gen(funct7, src2, src1, funct3, dst, opcode)
+    self.myinst.append(inst)
+    return  inst
+  
+  def Or(self,dst, src1, src2):
+    opcode = '0110011'
+    funct7 = '0000000'
+    funct3 = '110'
+    inst = self.Rtype_Gen(funct7, src2, src1, funct3, dst, opcode)
+    self.myinst.append(inst)
+    return  inst
+  
+  def And(self,dst, src1, src2):
+    opcode = '0110011'
+    funct7 = '0000000'
+    funct3 = '111'
+    inst = self.Rtype_Gen(funct7, src2, src1, funct3, dst, opcode)
+    self.myinst.append(inst)
+    return  inst
 
   def Addi(self, dst, src1, imm):
     opcode = '0010011'
     funct3 = '000'
+    inst = self.Itype_Gen(imm, src1, funct3, dst, opcode)
+    self.myinst.append(inst)
+    return inst
+  
+  def Slti(self,dst, src1, imm):
+    opcode = '0010011'
+    funct3 = '010'
+    inst = self.Itype_Gen(imm, src1, funct3, dst, opcode)
+    self.myinst.append(inst)
+    return inst
+  
+  def Xori(self,dst, src1, imm):
+    opcode = '0010011'
+    funct3 = '100'
+    inst = self.Itype_Gen(imm, src1, funct3, dst, opcode)
+    self.myinst.append(inst)
+    return inst
+  
+  def Ori(self,dst, src1, imm):
+    opcode = '0010011'
+    funct3 = '110'
+    inst = self.Itype_Gen(imm, src1, funct3, dst, opcode)
+    self.myinst.append(inst)
+    return inst
+  
+  def Andi(self,dst, src1, imm):
+    opcode = '0010011'
+    funct3 = '111'
     inst = self.Itype_Gen(imm, src1, funct3, dst, opcode)
     self.myinst.append(inst)
     return inst
@@ -145,6 +217,14 @@ class Instruction:
     opcode = '0010011'
     funct3 = '001'
     funct7 = '0000000'
+    inst = self.IShift_Gen(shamt, src1, funct3, dst, opcode, funct7)
+    self.myinst.append(inst)
+    return inst
+  
+  def Srai(self,dst, src1, shamt):
+    opcode = '0010011'
+    funct3 = '101'
+    funct7 = '0100000'
     inst = self.IShift_Gen(shamt, src1, funct3, dst, opcode, funct7)
     self.myinst.append(inst)
     return inst
@@ -215,6 +295,34 @@ class Instruction:
   def BNE(self, src1, src2, offset):
     opcode = '1100011'
     funct3 = '001'
+    inst = self.Branch_Gen(src1, src2, offset, funct3, opcode)
+    self.myinst.append(inst)
+    return inst
+  
+  def BLT(self,src1, src2, offset):
+    opcode = '1100011'
+    funct3 = '100'
+    inst = self.Branch_Gen(src1, src2, offset, funct3, opcode)
+    self.myinst.append(inst)
+    return inst
+
+  def BGE(self,src1, src2, offset):
+    opcode = '1100011'
+    funct3 = '101'
+    inst = self.Branch_Gen(src1, src2, offset, funct3, opcode)
+    self.myinst.append(inst)
+    return inst
+
+  def BLTU(self,src1, src2, offset):
+    opcode = '1100011'
+    funct3 = '110'
+    inst = self.Branch_Gen(src1, src2, offset, funct3, opcode)
+    self.myinst.append(inst)
+    return inst
+
+  def BGEU(self,src1, src2, offset):
+    opcode = '1100011'
+    funct3 = '111'
     inst = self.Branch_Gen(src1, src2, offset, funct3, opcode)
     self.myinst.append(inst)
     return inst

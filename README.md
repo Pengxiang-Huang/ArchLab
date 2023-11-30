@@ -9,3 +9,7 @@ pls see the test.py and Instruction.py and how they work
 
 11.25
 Adding the R-type pipeline for lab3 
+
+11.30
+Finished Lui, 
+Branch is not finished yet 
