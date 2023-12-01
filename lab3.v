@@ -255,7 +255,7 @@ module PipelinedCPU(halt, clk, rst);
   // pipeline registers
   reg [31:0] EX_MEM_ALUresult;
   reg [31:0] EX_MEM_Store_Data;
-  reg [4:0]  EX_MEM_Rdst;
+  reg [4:0]  EX_MEM_Rdst, EX_MEM_RStore_Src;
   reg signed [31:0] EX_MEM_DataAddr;
   reg [1:0] EX_MEM_MemSize;
   reg EX_MEM_IsStore, EX_MEM_IsLoad;
@@ -279,12 +279,12 @@ module PipelinedCPU(halt, clk, rst);
   // updating the module intsances
   assign OpA = (IsLui_EX || IsLui_EX) ? ID_EX_OpA // U type does not forward opA
               : (EX_MEM_Rdst === ID_EX_Rsrc1) ? EX_MEM_ALUresult 
-              : (MEM_WB_Rdst === ID_EX_Rsrc1) ? MEM_WB_ALUresult 
+              : (MEM_WB_Rdst === ID_EX_Rsrc1) ? MEM_EX_ForwardedData 
               : (WB_Rdst === ID_EX_Rsrc1) ? WB_ForwardedData
               : ID_EX_OpA; // enable data forwarding to resolve data hazard
   assign OpB =  (IsItype_EX || IsIshift_EX || IsLoad_EX || IsAuiPC_EX || IsLui_EX) ? ID_EX_OpB // I type, U type does not forward opB 
               :(EX_MEM_Rdst === ID_EX_Rsrc2) ? EX_MEM_ALUresult 
-              : (MEM_WB_Rdst === ID_EX_Rsrc2) ? MEM_WB_ALUresult
+              : (MEM_WB_Rdst === ID_EX_Rsrc2) ? MEM_EX_ForwardedData
               : (WB_Rdst === ID_EX_Rsrc2) ? WB_ForwardedData
               : ID_EX_OpB; // enable data forwarding to resolve data hazard
   assign func_EX = ID_EX_Func3;
@@ -330,6 +330,7 @@ module PipelinedCPU(halt, clk, rst);
     EX_MEM_Func3 <= ID_EX_Func3;
     EX_IF_PC <= Old_PC_ID;
     EX_MEM_halt_signal <= ID_EX_halt_signal ;
+    EX_MEM_RStore_Src <= ID_EX_Rsrc2;
   end
   /**************************EX Stage End**************************************/
 
@@ -338,6 +339,7 @@ module PipelinedCPU(halt, clk, rst);
   // pipeline registers
   reg [31:0] MEM_WB_ALUresult;
   reg [31:0] MEM_WB_LoadData;
+  reg [31:0] MEM_EX_ForwardedData; // for load and store 
   reg [4:0]  MEM_WB_Rdst;
   reg MEM_WB_IsLoad, MEM_WB_IsStore;
   reg MEM_WB_halt_signal ;
@@ -345,35 +347,46 @@ module PipelinedCPU(halt, clk, rst);
   // define module instances
   wire [31:0] DataAddr_MEM;
   wire [31:0] StoreData_MEM;
-  wire [31:0] DataWord  , storeData_MEM; // data word read from memory
+  wire [31:0] DataWord  , LoadData_MEM; // data word read from memory
   wire [1:0] MemSize_MEM;
   wire [2:0] func3_MEM;
+  wire [4:0] RStore_src ; 
+  wire IsLoad_MEM, IsStore_MEM ; 
   wire MemWrEn;
 
   // updating the module intsances
   assign DataAddr_MEM = EX_MEM_DataAddr;
   assign MemSize_MEM = EX_MEM_MemSize;
   assign MemWrEn = !EX_MEM_IsStore; // only enable store in MEM stage
-  assign StoreData_MEM = EX_MEM_Store_Data;
   assign func3_MEM = EX_MEM_Func3;
+  assign IsLoad_MEM = EX_MEM_IsLoad;
+  assign IsStore_MEM = EX_MEM_IsStore;
+  assign RStore_src = EX_MEM_RStore_Src; // the src for store instruction
+
+  // forward the fresh data if this cycle is a store and 
+  // the last cycle is a load from memory and they have RAW 
+  assign StoreData_MEM = ( (IsStore_MEM) && (MEM_WB_IsLoad) && (RStore_src === MEM_WB_Rdst) )? MEM_WB_LoadData
+                        : (EX_MEM_Store_Data);
+
 
   DataMem DMEM(.Addr(DataAddr_MEM), .Size(MemSize_MEM), .DataIn(StoreData_MEM), .DataOut(DataWord), .WEN(MemWrEn), .CLK(clk));
 
-  assign storeData_MEM = (
+  assign LoadData_MEM = (
                   ( func3_MEM == `FUNC_LBU ) ? (DataWord & 32'h000000ff) :
                   ( func3_MEM == `FUNC_LHU ) ? (DataWord & 32'h0000ffff) :
                   ( func3_MEM == `FUNC_LB ) ? ( { {24{DataWord[7]}}, DataWord[7:0] }) :
                   ( func3_MEM == `FUNC_LH ) ? ( { {16{DataWord[15]}}, DataWord[15:0] }) :
                   DataWord ) ;
-                  
+
   // updating pipeline registers
   always @(negedge clk) begin
     MEM_WB_ALUresult <= EX_MEM_ALUresult;
     MEM_WB_Rdst <= EX_MEM_Rdst;
-    MEM_WB_LoadData <= storeData_MEM;
+    MEM_WB_LoadData <= LoadData_MEM;
     MEM_WB_IsLoad <= EX_MEM_IsLoad;
     MEM_WB_IsStore <= EX_MEM_IsStore;
     MEM_WB_halt_signal <= EX_MEM_halt_signal ;
+    MEM_EX_ForwardedData <= (IsLoad_MEM) ? LoadData_MEM : EX_MEM_ALUresult; // forward the data to EX stage in order to write back 
   end
   /*************************MEM Stage End***************************************/
 
