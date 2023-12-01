@@ -89,37 +89,36 @@ module PipelinedCPU(halt, clk, rst);
   /**************************IF Stage Begin*************************************/
   // pipeline registers
   reg[31:0] IF_ID_InstWord;
-  reg[31:0] Old_PC_IF; // used for branch instructions
   reg[31:0] IF_ID_PC; // used for AUIPC instruction
 
   // define module instances
-  wire [31:0] PC , NPC, PC_Plus_4; // PC and NPC
+  wire [31:0] PC , NPC, PC_Plus_4, Fetch_PC; // PC and NPC
   wire [31:0] InstWord ; 
   wire IF_BranchTaken ; 
-  wire [31:0] IF_branch_offset ;
+  wire [31:0] IF_branch_offset, IF_Branch_Addr ;
 
   // updating the module intsances
   assign IF_BranchTaken = EX_IF_BranchTaken;
 
   // assign halt = IF_BranchTaken; 
   assign IF_branch_offset = EX_IF_branch_offset;
+  assign IF_Branch_Addr = EX_IF_PC + IF_branch_offset;
   assign PC_Plus_4 = PC + 4; // PC + 4
 
-
-  ////// has bug for branch offset !!!! currently using +8 
-  assign NPC = (IF_BranchTaken === 1) ? (EX_IF_PC + 8) : PC_Plus_4; // calculate the next PC
-  ////// has bug for NPC!!!!
-
+  // if branch taken, NPC = branch_addr + 4, else NPC = PC + 4
+  assign NPC = (IF_BranchTaken === 1) ? (IF_Branch_Addr + 4) : PC_Plus_4; // calculate the next PC
+  
+  // if branch taken, then fetch the instruction from the branch address
+  assign Fetch_PC = (IF_BranchTaken === 1) ? (IF_Branch_Addr) : PC; 
 
 
   Reg PC_REG(.Din(NPC), .Qout(PC), .WEN(1'b0), .CLK(clk), .RST(rst));
-  InstMem IMEM(.Addr(PC), .Size(`SIZE_WORD), .DataOut(InstWord), .CLK(clk));
+  InstMem IMEM(.Addr(Fetch_PC), .Size(`SIZE_WORD), .DataOut(InstWord), .CLK(clk));
 
   // updating pipeline registers
   always @(negedge clk) begin
     IF_ID_InstWord <= InstWord;
-    Old_PC_IF <= PC_Plus_4;
-    IF_ID_PC <= PC;
+    IF_ID_PC <= Fetch_PC;
   end
   /**************************IF Stage End *************************************/
 
@@ -171,10 +170,11 @@ module PipelinedCPU(halt, clk, rst);
   assign RWrdata_ID = WB_ForwardedData; // get the forwarded data from WB stage
 
   assign store_offset = { {20{IF_ID_InstWord[31]}}, IF_ID_InstWord[31:25], IF_ID_InstWord[11:7] };
+  
   assign imm_branch = { {19{IF_ID_InstWord[31]}} ,IF_ID_InstWord[31], IF_ID_InstWord[7], IF_ID_InstWord[30:25], IF_ID_InstWord[11:8], {1'b0} } ;
   
   // lui immediate value
-  assign LargeImm= ( { {12{IF_ID_InstWord[31]}}, IF_ID_InstWord[31:12] });
+  assign LargeImm = ( { {12{IF_ID_InstWord[31]}}, IF_ID_InstWord[31:12] });
 
   assign IsRtype = (opcode == `OPCODE_COMPUTE) && 
   ( (funct3 == `FUNC_ADD) || (funct3 == `FUNC_SUB) || (funct3 == `FUNC_SLL) || (funct3 == `FUNC_SLT) || (funct3 == `FUNC_SLTU) || (funct3 == `FUNC_XOR) || (funct3 == `FUNC_SRL) || (funct3 == `FUNC_SRA) || (funct3 == `FUNC_OR) || (funct3 == `FUNC_AND) )&& 
@@ -201,13 +201,12 @@ module PipelinedCPU(halt, clk, rst);
 
   assign known_type = (IsRtype || IsItype || IsIshift || IsStore || IsLoad || IsBranch || IsLui || IsAuiPC) ;
 
-  // halt after 4 cycles after ID to ensure instruction before is finished
+  // halt after 4 cycles after ID to ensure instructions before are finished
   assign halt = WB_ID_haltsignal ;
 
   assign MemSize = ( (funct3 == `FUNC_SB ) || (funct3 == `FUNC_LB)  || (funct3==`FUNC_LBU) ) ? `SIZE_BYTE 
                   : ( (funct3 == `FUNC_SH) || (funct3 == `FUNC_LH) || (funct3 ==`FUNC_LHU) ) ? `SIZE_HWORD 
                   : `SIZE_WORD;
-
 
   RegFile RF(.AddrA(Rsrc1_ID), .DataOutA(Rdata1_ID), 
       .AddrB(Rsrc2_ID), .DataOutB(Rdata2_ID), 
@@ -218,37 +217,60 @@ module PipelinedCPU(halt, clk, rst);
   
   // updating pipeline registers
   always @(negedge clk) begin
-    ID_EX_OpA <= (IsLui || IsAuiPC) ? LargeImm
-                : Rdata1_fresh ; // enable data forwarding to resolve data hazard
-    ID_EX_OpB <= (IsRtype) ? Rdata2_fresh
-                : (IsItype) ? imm_ext 
-                : (IsIshift) ? shamt 
-                : (IsStore) ? Rdata2_fresh
-                : (IsLoad) ? imm_ext 
-                : (IsAuiPC) ? IF_ID_PC 
-                : 32'b0; // get the operand B
-    ID_EX_Func3 <= funct3;
-    ID_EX_Func7 <= funct7;
-    ID_EX_Rdst <= Rdst_ID;
-    ID_EX_Rsrc1 <= Rsrc1_ID;
-    ID_EX_Rsrc2 <= Rsrc2_ID;
-    ID_EX_IsRtype <= IsRtype;
-    ID_EX_IsItype <= IsItype;
-    ID_EX_IsIshift <= IsIshift;
-    ID_EX_IsStore <= IsStore;
-    ID_EX_IsLoad <= IsLoad;
-    ID_EX_IsBranch <= IsBranch;
-    ID_EX_IsAuiPC <= IsAuiPC;
-    ID_EX_IsLui <= IsLui;
-    ID_EX_store_offset <= store_offset;
-    ID_EX_branch_offset <= imm_branch;
-    ID_EX_MemSize <= MemSize;
-    Old_PC_ID <= Old_PC_IF;
-    ID_EX_halt_signal <=  !(known_type) ;
+    if (EX_ID_Need_Flush) begin
+      ID_EX_OpA <= 0;
+      ID_EX_OpB <= 0;
+      ID_EX_Func3 <= 0;
+      ID_EX_Func7 <= 0;
+      ID_EX_Rdst <= 0;
+      ID_EX_Rsrc1 <= 0;
+      ID_EX_Rsrc2 <= 0;
+      ID_EX_IsRtype <= 0;
+      ID_EX_IsItype <= 0;
+      ID_EX_IsIshift <= 0;
+      ID_EX_IsStore <= 0;
+      ID_EX_IsLoad <= 0;
+      ID_EX_IsBranch <= 0;
+      ID_EX_IsAuiPC <= 0;
+      ID_EX_IsLui <= 0;
+      ID_EX_store_offset <= 0;
+      ID_EX_branch_offset <= 0;
+      ID_EX_MemSize <= 0;
+      Old_PC_ID <= 0;
+      ID_EX_halt_signal <= 0 ;
+      EX_ID_Need_Flush <= 0; // reset the need flush signal
+    end
+    else begin
+      ID_EX_OpA <= (IsLui || IsAuiPC) ? LargeImm
+                  : Rdata1_fresh ; // enable data forwarding to resolve data hazard
+      ID_EX_OpB <= (IsRtype || IsBranch) ? Rdata2_fresh
+                  : (IsItype) ? imm_ext 
+                  : (IsIshift) ? shamt 
+                  : (IsStore) ? Rdata2_fresh
+                  : (IsLoad) ? imm_ext 
+                  : (IsAuiPC) ? IF_ID_PC 
+                  : 32'hffffffff; // for testing purpose
+      ID_EX_Func3 <= funct3;
+      ID_EX_Func7 <= funct7;
+      ID_EX_Rdst <= Rdst_ID;
+      ID_EX_Rsrc1 <= Rsrc1_ID;
+      ID_EX_Rsrc2 <= Rsrc2_ID;
+      ID_EX_IsRtype <= IsRtype;
+      ID_EX_IsItype <= IsItype;
+      ID_EX_IsIshift <= IsIshift;
+      ID_EX_IsStore <= IsStore;
+      ID_EX_IsLoad <= IsLoad;
+      ID_EX_IsBranch <= IsBranch;
+      ID_EX_IsAuiPC <= IsAuiPC;
+      ID_EX_IsLui <= IsLui;
+      ID_EX_store_offset <= store_offset;
+      ID_EX_branch_offset <= imm_branch;
+      ID_EX_MemSize <= MemSize;
+      Old_PC_ID <= IF_ID_PC;
+      ID_EX_halt_signal <=  !(known_type) ;
+    end
   end
   /**************************ID Stage End *************************************/
-
-
 
 
   /**************************EX Stage Begin*************************************/
@@ -264,6 +286,7 @@ module PipelinedCPU(halt, clk, rst);
   reg signed [31:0] EX_IF_branch_offset;
   reg [31:0] EX_IF_PC ; 
   reg EX_MEM_halt_signal ;
+  reg EX_Need_Flush, EX_ID_Need_Flush ;
 
   // define module instances
   wire [31:0] ALUresult;
@@ -271,7 +294,7 @@ module PipelinedCPU(halt, clk, rst);
   wire [31:0] OpA, OpB;
   wire [2:0]  func_EX;
   wire [6:0]  auxFunc_EX;
-  wire IsRtype_EX, IsItype_EX, IsIshift_EX, IsStore_EX, IsLoad_EX, IsLui_EX, IsAuiPC_EX;
+  wire IsRtype_EX, IsItype_EX, IsIshift_EX, IsStore_EX, IsLoad_EX, IsLui_EX, IsAuiPC_EX, IsBranch_EX;
   wire branchTaken ; 
   wire beqtaken, bnetaken, blttaken, bgetaken, bltutaken, bgeutaken;
   wire BadAddr_EX;
@@ -298,39 +321,59 @@ module PipelinedCPU(halt, clk, rst);
   assign IsAuiPC_EX = ID_EX_IsAuiPC;
   assign store_offset_EX = ID_EX_store_offset;
   assign DataAddr_EX = (IsStore_EX) ? (OpA + store_offset_EX) : (IsLoad_EX) ? (OpA + OpB) : 32'b0; // calculate the data address for load and store
-  
+  assign IsBranch_EX = ID_EX_IsBranch;
   
   ExecutionUnit EU(.out(ALUresult), .opA(OpA), .opB(OpB), .func(ID_EX_Func3), .auxFunc(ID_EX_Func7), 
   .IsRtype(IsRtype_EX), .IsItype(IsItype_EX), .IsIshift(IsIshift_EX), .IsLui(IsLui_EX), .IsAuiPC(IsAuiPC_EX));
 
 
   // resolve branch taken condition 
-  assign beqtaken = ((IsBranch) && (funct3 == `FUNC_BEQ))? (OpA == OpB) : 1'b0;
-  assign bnetaken = ((IsBranch) && (funct3 == `FUNC_BNE))? (OpA != OpB) : 1'b0;
-  assign blttaken = ((IsBranch) && (funct3 == `FUNC_BLT))? ($signed(OpA) < $signed(OpB)) : 1'b0;
-  assign bgetaken = ((IsBranch) && (funct3 == `FUNC_BGE))? ($signed(OpA) >= $signed(OpB)) : 1'b0;
-  assign bltutaken = ((IsBranch) && (funct3 == `FUNC_BLTU))? ($unsigned(OpA) < $unsigned(OpB)) : 1'b0;
-  assign bgeutaken = ((IsBranch) && (funct3 == `FUNC_BGEU) )? ($unsigned(OpA) >= $unsigned(OpB)) : 1'b0;
+  assign beqtaken = ((IsBranch_EX) && (ID_EX_Func3 == `FUNC_BEQ))? (OpA == OpB) : 1'b0;
+  assign bnetaken = ((IsBranch_EX) && (ID_EX_Func3 == `FUNC_BNE))? (OpA != OpB) : 1'b0;
+  assign blttaken = ((IsBranch_EX) && (ID_EX_Func3 == `FUNC_BLT))? ($signed(OpA) < $signed(OpB)) : 1'b0;
+  assign bgetaken = ((IsBranch_EX) && (ID_EX_Func3 == `FUNC_BGE))? ($signed(OpA) >= $signed(OpB)) : 1'b0;
+  assign bltutaken = ((IsBranch_EX) && (ID_EX_Func3 == `FUNC_BLTU))? ($unsigned(OpA) < $unsigned(OpB)) : 1'b0;
+  assign bgeutaken = ((IsBranch_EX) && (ID_EX_Func3 == `FUNC_BGEU) )? ($unsigned(OpA) >= $unsigned(OpB)) : 1'b0;
 
   // any of branch taken is true then taken 
   assign branchTaken = ( (beqtaken) || (bnetaken) || (blttaken) || (bgetaken) || (bltutaken) || (bgeutaken) );
 
-
+ 
   // updating pipeline registers
   always @(negedge clk) begin
-    EX_MEM_ALUresult <= ALUresult;
-    EX_MEM_Rdst <= ID_EX_Rdst;
-    EX_MEM_DataAddr <= DataAddr_EX;
-    EX_MEM_MemSize <= ID_EX_MemSize;
-    EX_MEM_Store_Data <= OpB;
-    EX_MEM_IsStore <= IsStore_EX;
-    EX_MEM_IsLoad <= IsLoad_EX;
-    EX_IF_BranchTaken <= branchTaken;
-    EX_IF_branch_offset <= ID_EX_branch_offset;
-    EX_MEM_Func3 <= ID_EX_Func3;
-    EX_IF_PC <= Old_PC_ID;
-    EX_MEM_halt_signal <= ID_EX_halt_signal ;
-    EX_MEM_RStore_Src <= ID_EX_Rsrc2;
+    if(EX_Need_Flush ) begin
+      EX_MEM_ALUresult <= 0;
+      EX_MEM_Rdst <= 0;
+      EX_MEM_DataAddr <= 0;
+      EX_MEM_MemSize <= 0;
+      EX_MEM_Store_Data <= 0;
+      EX_MEM_IsStore <= 0;
+      EX_MEM_IsLoad <= 0;
+      EX_IF_BranchTaken <= 0;
+      EX_IF_branch_offset <= 32'hdeadbeef;
+      EX_MEM_Func3 <= 0;
+      EX_IF_PC <= 0;
+      EX_MEM_halt_signal <= 0 ;
+      EX_MEM_RStore_Src <= 0;
+      EX_Need_Flush <= 0; // reset the need flush signal
+    end
+    else begin
+      EX_MEM_ALUresult <= ALUresult;
+      EX_MEM_Rdst <= ID_EX_Rdst;
+      EX_MEM_DataAddr <= DataAddr_EX;
+      EX_MEM_MemSize <= ID_EX_MemSize;
+      EX_MEM_Store_Data <= OpB;
+      EX_MEM_IsStore <= IsStore_EX;
+      EX_MEM_IsLoad <= IsLoad_EX;
+      EX_IF_BranchTaken <= branchTaken;
+      EX_IF_branch_offset <= ID_EX_branch_offset;
+      EX_MEM_Func3 <= ID_EX_Func3;
+      EX_IF_PC <= Old_PC_ID;
+      EX_MEM_halt_signal <= ID_EX_halt_signal ;
+      EX_MEM_RStore_Src <= ID_EX_Rsrc2;
+      EX_Need_Flush <= branchTaken ; // need to flush the pipeline next cycle if branch taken
+      EX_ID_Need_Flush <= branchTaken ; // need to flush the pipeline next cycle if branch taken
+    end
   end
   /**************************EX Stage End**************************************/
 
