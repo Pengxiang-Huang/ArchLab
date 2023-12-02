@@ -25,8 +25,8 @@ the correct instruction in IF stage in the next cycle.
 also fetch the correct instruction in IF stage in the next cycle.
 
 4. Data forwarding are fully implemented except for the case that the
-the use of data is immediately after the load data, which require once cycle stall.
-Other than this case, all data hazard are resolved by forwarding, which require no stall.
+the use of data is immediately after the load data, which require one cycle stall.
+Other than this case, all data hazard are resolved by forwarding, which requires no stall.
 ***/
 
 // Definition of ISA Encoding

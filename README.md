@@ -1,15 +1,13 @@
 # ArchLab
-Labs for computer architecture 
+Labs for computer architecture course in Northwestern
 
+CPU design for RISC-V ISA
 
-# Lab3 
+## Test 
+`Instruction.py` provides the Encoding for RISC-V ISA, `test.py` and `testgen.py` provide the automatic tests
 
-Adding the ad hoc test file for lab3, not completed yet
-pls see the test.py and Instruction.py and how they work
+## Lab2
+Implement a Single Cycle CPU 
 
-11.25
-Adding the R-type pipeline for lab3 
-
-11.30
-Finished Lui, 
-Branch is not finished yet 
+## Lab3 
+Implement a 5-stage CPU, with data forwarding 
