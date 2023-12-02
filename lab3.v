@@ -94,22 +94,28 @@ module PipelinedCPU(halt, clk, rst);
   // define module instances
   wire [31:0] PC , NPC, PC_Plus_4, Fetch_PC; // PC and NPC
   wire [31:0] InstWord ; 
-  wire IF_BranchTaken ; 
+  wire IF_BranchTaken, IF_Jump_Taken ; 
   wire [31:0] IF_branch_offset, IF_Branch_Addr ;
+  wire [31:0] IF_Jump_Addr ;
 
   // updating the module intsances
   assign IF_BranchTaken = EX_IF_BranchTaken;
+  assign IF_Jump_Taken = ID_IF_Jump_Taken ;
 
-  // assign halt = IF_BranchTaken; 
   assign IF_branch_offset = EX_IF_branch_offset;
   assign IF_Branch_Addr = EX_IF_PC + IF_branch_offset;
+  assign IF_Jump_Addr = ID_IF_Jump_Addr ; 
   assign PC_Plus_4 = PC + 4; // PC + 4
 
   // if branch taken, NPC = branch_addr + 4, else NPC = PC + 4
-  assign NPC = (IF_BranchTaken === 1) ? (IF_Branch_Addr + 4) : PC_Plus_4; // calculate the next PC
+  assign NPC = (IF_BranchTaken === 1) ? (IF_Branch_Addr + 4) 
+              : (IF_Jump_Taken === 1) ? (IF_Jump_Addr)
+              : PC_Plus_4; // calculate the next PC
   
   // if branch taken, then fetch the instruction from the branch address
-  assign Fetch_PC = (IF_BranchTaken === 1) ? (IF_Branch_Addr) : PC; 
+  assign Fetch_PC = (IF_BranchTaken === 1) ? (IF_Branch_Addr) 
+                    : (IF_Jump_Taken === 1) ? (IF_Jump_Addr)
+                    : PC; 
 
 
   Reg PC_REG(.Din(NPC), .Qout(PC), .WEN(1'b0), .CLK(clk), .RST(rst));
@@ -135,15 +141,19 @@ module PipelinedCPU(halt, clk, rst);
   reg [6:0]  ID_EX_Func7;
   reg [4:0]  ID_EX_Rdst, ID_EX_Rsrc1, ID_EX_Rsrc2; 
   reg [1:0]  ID_EX_MemSize;
-  reg ID_EX_IsRtype, ID_EX_IsItype, ID_EX_IsIshift , ID_EX_IsStore, ID_EX_IsLoad, ID_EX_IsBranch, ID_EX_IsLui, ID_EX_IsAuiPC;
+  reg ID_EX_IsRtype, ID_EX_IsItype, ID_EX_IsIshift , ID_EX_IsStore, ID_EX_IsLoad, ID_EX_IsBranch, ID_EX_IsLui, ID_EX_IsAuiPC, ID_EX_IsJump;
   reg ID_EX_halt_signal ;
+  reg Jump_Taken_Flush ;
+  reg ID_IF_Jump_Taken ;
+  reg [31:0] ID_IF_Jump_Addr ; 
 
   // define module instances
   wire [6:0]  opcode;
   wire [6:0]  funct7;
   wire [2:0]  funct3;
   wire known_type ;
-  wire IsRtype , IsItype , IsIshift, IsStore, IsLoad, IsBranch, IsLui, IsAuiPC;
+  wire IsRtype , IsItype , IsIshift, IsStore, IsLoad, IsBranch, IsLui, IsAuiPC, IsJump;
+  wire IsJALR, IsJAL;
   wire [31:0] shamt;
   wire signed [31:0] imm_ext;
   wire signed [31:0] store_offset ;
@@ -153,7 +163,7 @@ module PipelinedCPU(halt, clk, rst);
   wire [31:0] Rdata1_fresh, Rdata2_fresh; // to resolve data hazard
   wire        RWrEn_ID;
   wire [1:0]  MemSize;
-  wire [31:0] LargeImm;
+  wire [31:0] LargeImm, jal_imm;
 
   // updating the module intsances
   assign opcode = IF_ID_InstWord[6:0];
@@ -175,6 +185,9 @@ module PipelinedCPU(halt, clk, rst);
   
   // lui immediate value
   assign LargeImm = ( { {12{IF_ID_InstWord[31]}}, IF_ID_InstWord[31:12] });
+
+  // jal immediate value
+  assign jal_imm =  { {12{IF_ID_InstWord[31]}}, IF_ID_InstWord[31],  IF_ID_InstWord[19:12], IF_ID_InstWord[20], IF_ID_InstWord[30:21]  } << 1 ;
 
   assign IsRtype = (opcode == `OPCODE_COMPUTE) && 
   ( (funct3 == `FUNC_ADD) || (funct3 == `FUNC_SUB) || (funct3 == `FUNC_SLL) || (funct3 == `FUNC_SLT) || (funct3 == `FUNC_SLTU) || (funct3 == `FUNC_XOR) || (funct3 == `FUNC_SRL) || (funct3 == `FUNC_SRA) || (funct3 == `FUNC_OR) || (funct3 == `FUNC_AND) )&& 
@@ -199,7 +212,11 @@ module PipelinedCPU(halt, clk, rst);
 
   assign IsAuiPC = (opcode == `OPCODE_AUIPC);
 
-  assign known_type = (IsRtype || IsItype || IsIshift || IsStore || IsLoad || IsBranch || IsLui || IsAuiPC) ;
+  assign IsJump = (opcode == `OPCODE_JUMP || opcode == `OPCODE_JUMPR );
+  assign IsJALR = (opcode == `OPCODE_JUMPR) && (funct3 == `FUNC_JALR);
+  assign IsJAL = (opcode == `OPCODE_JUMP) ;
+
+  assign known_type = (IsRtype || IsItype || IsIshift || IsStore || IsLoad || IsBranch || IsJump || IsLui || IsAuiPC) ;
 
   // halt after 4 cycles after ID to ensure instructions before are finished
   assign halt = WB_ID_haltsignal ;
@@ -217,7 +234,7 @@ module PipelinedCPU(halt, clk, rst);
   
   // updating pipeline registers
   always @(negedge clk) begin
-    if (EX_ID_Need_Flush) begin
+    if (EX_ID_Need_Flush || Jump_Taken_Flush) begin
       ID_EX_OpA <= 0;
       ID_EX_OpB <= 0;
       ID_EX_Func3 <= 0;
@@ -238,10 +255,14 @@ module PipelinedCPU(halt, clk, rst);
       ID_EX_MemSize <= 0;
       Old_PC_ID <= 0;
       ID_EX_halt_signal <= 0 ;
+      ID_IF_Jump_Addr <= 0 ;
+      ID_IF_Jump_Taken <= 0 ;
+      Jump_Taken_Flush <= 0 ; // reset the flush signal
       EX_ID_Need_Flush <= 0; // reset the need flush signal
     end
     else begin
       ID_EX_OpA <= (IsLui || IsAuiPC) ? LargeImm
+                  : (IsJump) ? IF_ID_PC
                   : Rdata1_fresh ; // enable data forwarding to resolve data hazard
       ID_EX_OpB <= (IsRtype || IsBranch) ? Rdata2_fresh
                   : (IsItype) ? imm_ext 
@@ -249,6 +270,7 @@ module PipelinedCPU(halt, clk, rst);
                   : (IsStore) ? Rdata2_fresh
                   : (IsLoad) ? imm_ext 
                   : (IsAuiPC) ? IF_ID_PC 
+                  : (IsJump) ? 4
                   : 32'hffffffff; // for testing purpose
       ID_EX_Func3 <= funct3;
       ID_EX_Func7 <= funct7;
@@ -262,12 +284,16 @@ module PipelinedCPU(halt, clk, rst);
       ID_EX_IsLoad <= IsLoad;
       ID_EX_IsBranch <= IsBranch;
       ID_EX_IsAuiPC <= IsAuiPC;
+      ID_EX_IsJump <= IsJump;
       ID_EX_IsLui <= IsLui;
       ID_EX_store_offset <= store_offset;
       ID_EX_branch_offset <= imm_branch;
       ID_EX_MemSize <= MemSize;
       Old_PC_ID <= IF_ID_PC;
       ID_EX_halt_signal <=  !(known_type) ;
+      ID_IF_Jump_Addr <= (IsJAL) ? (IF_ID_PC + jal_imm) : (IsJALR) ? (Rdata1_fresh + imm_ext): 32'h00000000 ;
+      ID_IF_Jump_Taken <= (IsJump) ;
+      Jump_Taken_Flush <= (IsJump) ; // flush the ID for next cycle if jump taken
     end
   end
   /**************************ID Stage End *************************************/
@@ -294,18 +320,18 @@ module PipelinedCPU(halt, clk, rst);
   wire [31:0] OpA, OpB;
   wire [2:0]  func_EX;
   wire [6:0]  auxFunc_EX;
-  wire IsRtype_EX, IsItype_EX, IsIshift_EX, IsStore_EX, IsLoad_EX, IsLui_EX, IsAuiPC_EX, IsBranch_EX;
+  wire IsRtype_EX, IsItype_EX, IsIshift_EX, IsStore_EX, IsLoad_EX, IsLui_EX, IsAuiPC_EX, IsBranch_EX, IsJump_EX;
   wire branchTaken ; 
   wire beqtaken, bnetaken, blttaken, bgetaken, bltutaken, bgeutaken;
   wire BadAddr_EX;
 
   // updating the module intsances
-  assign OpA = (IsLui_EX || IsLui_EX) ? ID_EX_OpA // U type does not forward opA
+  assign OpA = (IsLui_EX || IsLui_EX || IsJump_EX) ? ID_EX_OpA // U J type does not forward opA
               : (EX_MEM_Rdst === ID_EX_Rsrc1) ? EX_MEM_ALUresult 
               : (MEM_WB_Rdst === ID_EX_Rsrc1) ? MEM_EX_ForwardedData 
               : (WB_Rdst === ID_EX_Rsrc1) ? WB_ForwardedData
               : ID_EX_OpA; // enable data forwarding to resolve data hazard
-  assign OpB =  (IsItype_EX || IsIshift_EX || IsLoad_EX || IsAuiPC_EX || IsLui_EX) ? ID_EX_OpB // I type, U type does not forward opB 
+  assign OpB =  (IsItype_EX || IsIshift_EX || IsLoad_EX || IsAuiPC_EX || IsLui_EX || IsJump_EX) ? ID_EX_OpB // I type, U, J type does not forward opB 
               :(EX_MEM_Rdst === ID_EX_Rsrc2) ? EX_MEM_ALUresult 
               : (MEM_WB_Rdst === ID_EX_Rsrc2) ? MEM_EX_ForwardedData
               : (WB_Rdst === ID_EX_Rsrc2) ? WB_ForwardedData
@@ -319,12 +345,13 @@ module PipelinedCPU(halt, clk, rst);
   assign IsLoad_EX = ID_EX_IsLoad;
   assign IsLui_EX = ID_EX_IsLui;
   assign IsAuiPC_EX = ID_EX_IsAuiPC;
+  assign IsJump_EX = ID_EX_IsJump;
   assign store_offset_EX = ID_EX_store_offset;
   assign DataAddr_EX = (IsStore_EX) ? (OpA + store_offset_EX) : (IsLoad_EX) ? (OpA + OpB) : 32'b0; // calculate the data address for load and store
   assign IsBranch_EX = ID_EX_IsBranch;
   
   ExecutionUnit EU(.out(ALUresult), .opA(OpA), .opB(OpB), .func(ID_EX_Func3), .auxFunc(ID_EX_Func7), 
-  .IsRtype(IsRtype_EX), .IsItype(IsItype_EX), .IsIshift(IsIshift_EX), .IsLui(IsLui_EX), .IsAuiPC(IsAuiPC_EX));
+  .IsRtype(IsRtype_EX), .IsItype(IsItype_EX), .IsIshift(IsIshift_EX), .IsLui(IsLui_EX), .IsAuiPC(IsAuiPC_EX), .IsJump(IsJump_EX));
 
 
   // resolve branch taken condition 
@@ -464,7 +491,7 @@ endmodule // PipelinedCPU
 
 
 // EU provide ALU result for R and I type instructions
-module ExecutionUnit(out, opA, opB, func, auxFunc, IsRtype, IsItype, IsIshift, IsLui, IsAuiPC);
+module ExecutionUnit(out, opA, opB, func, auxFunc, IsRtype, IsItype, IsIshift, IsLui, IsAuiPC, IsJump);
    output [31:0] out;
    input [31:0]  opA, opB;
    input [2:0] 	 func;
@@ -474,6 +501,7 @@ module ExecutionUnit(out, opA, opB, func, auxFunc, IsRtype, IsItype, IsIshift, I
    input IsIshift;
    input IsLui;
    input IsAuiPC;
+   input IsJump;
 
   reg [31:0] result;
   
@@ -526,6 +554,9 @@ module ExecutionUnit(out, opA, opB, func, auxFunc, IsRtype, IsItype, IsIshift, I
     end
     else if (IsAuiPC) begin
       result <= opA + opB; // pc + imm
+    end
+    else if (IsJump) begin
+      result <= opA + opB; // pc + 4
     end
     else begin
       result <= 32'b0;
