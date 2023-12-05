@@ -9,6 +9,7 @@ Implement a pipelined CPU with the following features:
 1. 5-stage pipeline
 2. Full data forwarding to resolve data hazard
 3. Branch prediction and pipeline flush if misprediction
+4. Stall for load-use hazard
 
 Note:
 1. Since the library modules are required to use, and can only instance once,
@@ -24,9 +25,11 @@ the correct instruction in IF stage in the next cycle.
 3. Jump is decided in the ID stage, and flush the ID stage in the next cycle, 
 also fetch the correct instruction in IF stage in the next cycle.
 
-4. Data forwarding are fully implemented except for the case that the
-the use of data is immediately after the load data, which require one cycle stall.
-Other than this case, all data hazard are resolved by forwarding, which requires no stall.
+4. Data forwarding are fully implemented. The forwarding can resolve the RAW hazard except
+for the load-use case. The load-use case will stall the pipeline for one cycle.
+
+5. Load-use is detected at the ID stage, then insert a nop to the next cycle and 
+hold the pipeline for one cycle in IF stage stoping fetching the next instruction.
 ***/
 
 // Definition of ISA Encoding
@@ -137,6 +140,7 @@ module PipelinedCPU(halt, clk, rst);
   */
   assign NPC = (IF_BranchTaken === 1) ? (IF_Branch_Addr + 4) 
               : (IF_Jump_Taken === 1) ? (IF_Jump_Addr)
+              : (Load_Use_Need_Stall_ID === 1) ? (PC) // stall if load use hazard
               : PC_Plus_4; 
   /* 
   * If branch taken, then fetch the instruction from the branch address other than PC
@@ -152,8 +156,13 @@ module PipelinedCPU(halt, clk, rst);
 
   /////// updating pipeline registers ///////
   always @(negedge clk) begin
-    IF_ID_InstWord <= InstWord;
-    IF_ID_PC <= Fetch_PC;
+    if (Load_Use_Need_Stall_ID) begin
+      // stall 
+    end
+    else begin
+      IF_ID_InstWord <= InstWord;
+      IF_ID_PC <= Fetch_PC;
+    end 
   end
 
   /**************************IF Stage End *************************************/
@@ -197,6 +206,10 @@ module PipelinedCPU(halt, clk, rst);
   wire [1:0]  MemSize;
   wire [31:0] LargeImm, jal_imm;
   wire [31:0] Rdata1_fresh, Rdata2_fresh; // to resolve data hazard
+  /*
+  * Stall signal for load-use hazard
+  */
+  wire Load_Use_Need_Stall_ID ; 
 
   /////// updating the module intsances ////////
   assign opcode = IF_ID_InstWord[6:0];
@@ -258,6 +271,14 @@ module PipelinedCPU(halt, clk, rst);
   assign Rdata1_fresh = (Rdst_actual === Rsrc1_ID) ? RWrdata_ID : Rdata1_ID; 
   assign Rdata2_fresh = (Rdst_actual === Rsrc2_ID) ? RWrdata_ID : Rdata2_ID; 
   /*
+  * If Last cycle is a load 
+  * and current cycle is a use (R and I type)
+  * and they have RAW hazard, then stall 
+  */ 
+  assign Load_Use_Need_Stall_ID =( (IsRtype || IsIshift || IsItype)
+                                   && (ID_EX_IsLoad) 
+                                   && ( (Rsrc1_ID === ID_EX_Rdst) || (Rsrc2_ID === ID_EX_Rdst) ) ) ;
+  /*
   * Updating the register file instance
   */
   RegFile RF(.AddrA(Rsrc1_ID), .DataOutA(Rdata1_ID), 
@@ -269,8 +290,9 @@ module PipelinedCPU(halt, clk, rst);
   always @(negedge clk) begin
     /*
     * Flush the pipeline if branch/jump is taken 
+    * or load use hazard (inserting a nop)
     */
-    if (EX_ID_Need_Flush || Jump_Taken_Flush) begin
+    if (EX_ID_Need_Flush || Jump_Taken_Flush || Load_Use_Need_Stall_ID) begin
       ID_EX_OpA <= 0;
       ID_EX_OpB <= 0;
       ID_EX_Func3 <= 0;
