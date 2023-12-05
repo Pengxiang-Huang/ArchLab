@@ -1,4 +1,4 @@
-// Northwestern - CompEng 361 - Lab2
+// Northwestern - CompEng 361 - Lab3
 // Groupname: SmartArch
 // NetIDs: tht5102, dsn9734 
 
