@@ -1,4 +1,4 @@
-// Northwestern - CompEng 361 - Lab3
+// Northwestern - CompEng 361 - Lab2
 // Groupname: SmartArch
 // NetIDs: tht5102, dsn9734 
 
@@ -139,7 +139,7 @@ module PipelinedCPU(halt, clk, rst);
   * If branch taken, update NPC = branch_addr + 4, else NPC = PC + 4
   */
   assign NPC = (IF_BranchTaken === 1) ? (IF_Branch_Addr + 4) 
-              : (IF_Jump_Taken === 1) ? (IF_Jump_Addr)
+              : (IF_Jump_Taken === 1) ? (IF_Jump_Addr + 4)
               : (Load_Use_Need_Stall_ID === 1) ? (PC) // stall if load use hazard
               : PC_Plus_4; 
   /* 
